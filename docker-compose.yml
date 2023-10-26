@@ -1,0 +1,23 @@
+# satellite-oracle-svelte/docker-compose.yml
+services:
+  app:
+    build:
+      context: .
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  nginx:
+    image: nginx:latest
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf
+      - /etc/ssl/certs/phlreich.com_ssl_certificate.cer:/etc/ssl/certs/phlreich.com_ssl_certificate.cer:ro
+      - /etc/ssl/certs/_.phlreich.com_private_key.key:/etc/ssl/certs/_.phlreich.com_private_key.key:ro
+    depends_on:
+      app:
+        condition: service_healthy
