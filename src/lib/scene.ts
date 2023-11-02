@@ -20,18 +20,27 @@ let animationFrameId: number;
 
 const resolution = 100;
 const earthRadius = 6356.7523;
-const earthGeometry = new THREE.SphereGeometry(
-    earthRadius,
-    resolution,
-    resolution
-);
-const earthTexture = new THREE.TextureLoader().load(
-    '/earth.webp'
-);
-earthTexture.colorSpace = THREE.SRGBColorSpace;
-const earthMaterial = new THREE.MeshBasicMaterial({ map: earthTexture });
-const earthMesh = new THREE.Mesh(earthGeometry, earthMaterial);
+
+// Create the Earth geometry
+const earthGeometry = new THREE.SphereGeometry(earthRadius, resolution, resolution);
+
+// Start with a basic material of solid color
+const initialMaterial = new THREE.MeshBasicMaterial({ color: 0x005f9a });
+const earthMesh = new THREE.Mesh(earthGeometry, initialMaterial);
 scene.add(earthMesh);
+
+// Load the texture
+const textureLoader = new THREE.TextureLoader();
+textureLoader.load('/earth-compressed.webp', (texture) => {
+    texture.colorSpace = THREE.SRGBColorSpace;
+
+    // Update the material of the Earth mesh
+    earthMesh.material = new THREE.MeshBasicMaterial({ map: texture });
+
+    // Important: This tells Three.js to recompile the shader for the mesh
+    earthMesh.material.needsUpdate = true;
+});
+
 
 const vertexShader = `
   attribute float size;
@@ -113,9 +122,10 @@ export const createScene = (el: HTMLCanvasElement, satellites: any) => {
     }
 
     const satelliteData = satellites.map((sat: any) => {
-        const satrec = twoline2satrec(sat['TLE_LINE1'], sat['TLE_LINE2']);
-        const epoch = new Date(sat['EPOCH']);
-        return { satrec, epoch };
+        const [epoch, tleLine1, tleLine2] = sat;
+        const satrec = twoline2satrec(tleLine1, tleLine2);
+        const epochDate = new Date(epoch);
+        return { satrec, epoch: epochDate };
     });
     const satelliteWorker = new Worker(new URL('./satelliteWorker.js', import.meta.url), { type: 'module' });
     satelliteWorker.postMessage({ N, satellitepositions, satelliteData });

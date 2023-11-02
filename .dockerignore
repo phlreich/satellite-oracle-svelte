@@ -1,0 +1,4 @@
+# satellite-oracle-svelte/.dockerignore
+src/data/*.db
+src/data/*.db-shm
+src/data/*.db-wal

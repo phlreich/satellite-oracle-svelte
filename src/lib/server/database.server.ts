@@ -4,36 +4,36 @@ import type { satcatRow } from './types.js';
 import Papa from 'papaparse';
 import type { ParseResult } from 'papaparse';
 import fs from 'fs/promises';
+import nfs from 'fs';
 import path from 'path';
 import { EMAIL, PASSWORD } from '$env/static/private';
-
+import { setCache } from './cache.js';
 
 const DB_PATH = path.join(process.cwd(), 'src/data/satellite.db');
 
-const db = new Database(DB_PATH, { verbose: console.log });
+const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL');
 
-export async function initializeDatabase() {
+export async function initializeDatabaseAndSetCache() {
+	try {
+		function checkTableExists(tableName: string): boolean {
+			const result = db
+				.prepare(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?;`)
+				.get(tableName) as { 'count(*)': number };
+			return result['count(*)'] > 0;
+		}
 
-  try {
+		function isTableNonEmpty(tableName: string): boolean {
+			const result = db.prepare(`SELECT count(*) FROM ${tableName};`).get() as {
+				'count(*)': number;
+			};
+			return result['count(*)'] > 0;
+		}
 
-    function checkTableExists(tableName: string): boolean {
-      const result = db.prepare(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?;`).get(tableName) as { 'count(*)': number };
-      return result['count(*)'] > 0;
-    }
+		const tables = ['gp', 'satcat', 'boxscore'];
 
-    function isTableNonEmpty(tableName: string): boolean {
-      const result = db.prepare(`SELECT count(*) FROM ${tableName};`).get() as { 'count(*)': number };
-      return result['count(*)'] > 0;
-    }
-
-    const tables = ["gp", "satcat", "boxscore"];
-    const allTablesExist = tables.every(checkTableExists);
-    const allTablesNonEmpty = allTablesExist && tables.every(isTableNonEmpty);
-
-    if (!allTablesExist || !allTablesNonEmpty) {
-
-      const createBoxscoreTable = `CREATE TABLE boxscore ( 
+		if (!tables.every(checkTableExists) || !tables.every(isTableNonEmpty)) {
+			const createBoxscoreTable = `CREATE TABLE IF NOT EXISTS boxscore ( 
     COUNTRY VARCHAR(100) NOT NULL,
     SPADOC_CD VARCHAR(6),
     ORBITAL_TBA DECIMAL(23,0),
@@ -47,7 +47,7 @@ export async function initializeDatabase() {
     DECAYED_TOTAL_COUNT DECIMAL(23,0),
     COUNTRY_TOTAL BIGINT NOT NULL DEFAULT 0 );`;
 
-      const createGpTable = `CREATE TABLE IF NOT EXISTS gp ( 
+			const createGpTable = `CREATE TABLE IF NOT EXISTS gp ( 
     CCSDS_OMM_VERS VARCHAR(3) NOT NULL,
     COMMENT VARCHAR(33) NOT NULL,
     CREATION_DATE DATETIME,
@@ -89,7 +89,7 @@ export async function initializeDatabase() {
     TLE_LINE1 VARCHAR(71),
     TLE_LINE2 VARCHAR(71) );`;
 
-      const createSatcatTable = `CREATE TABLE satcat ( 
+			const createSatcatTable = `CREATE TABLE IF NOT EXISTS satcat ( 
     INTLDES CHAR(12) NOT NULL,
     NORAD_CAT_ID INTEGER UNSIGNED PRIMARY KEY NOT NULL,
     OBJECT_TYPE VARCHAR(12),
@@ -115,227 +115,269 @@ export async function initializeDatabase() {
     OBJECT_ID CHAR(12) NOT NULL,
     OBJECT_NUMBER INTEGER UNSIGNED );`;
 
-      db.exec(createBoxscoreTable);
-      db.exec(createGpTable);
-      db.exec(createSatcatTable);
+			db.exec(createBoxscoreTable);
+			db.exec(createGpTable);
+			db.exec(createSatcatTable);
 
-      console.log('Tables created.');
-      await updateCSVs(EMAIL, PASSWORD);
-      await updateSatcat();
-      await updateBoxscore();
-      await updateGP();
-      await checkpoint();
-    }
+			console.log('Tables created.');
 
-  } catch (err) {
-    console.error('Error checking database tables:', err);
-    // TODO implement error handling
-  }
+			// check if the CSVs are present
+			const csvs = ['gp', 'satcat', 'boxscore'];
+			if (!csvs.every((csv) => nfs.existsSync(`${process.cwd()}/src/data/${csv}.csv`))) {
+				console.log('CSVs not found. Downloading.');
+				await updateCSVs(EMAIL, PASSWORD);
+				return;
+			} else {
+				console.log('CSVs present. Skipping download.');
+			}
+
+			await updateSatcat();
+			await updateBoxscore();
+			await updateGP();
+			await checkpoint();
+			setCache(await getSceneData());
+		}
+	} catch (err) {
+		console.error('Error checking database tables:', err);
+		// TODO implement error handling
+	}
 }
 
 export function getSatcatHead(limit = 2): satcatRow[] {
-  const sql = `
+	const sql = `
   SELECT * FROM satcat
 limit $limit  
   `;
-  const stmnt = db.prepare(sql);
-  const rows = stmnt.all({ limit });
-  return rows as satcatRow[];
+	const stmnt = db.prepare(sql);
+	const rows = stmnt.all({ limit });
+	return rows as satcatRow[];
 }
 
-export async function getSceneData() {
-  const sql = `
-  SELECT NORAD_CAT_ID, EPOCH, TLE_LINE1, TLE_LINE2 FROM gp;
+interface SatelliteRow {
+	EPOCH: string;
+	TLE_LINE1: string;
+	TLE_LINE2: string;
+}
+
+export async function getSceneData(): Promise<Array<[string, string, string]>> {
+	const sql = `
+  SELECT EPOCH, TLE_LINE1, TLE_LINE2 FROM gp;
   `;
-  const stmnt = db.prepare(sql);
-  const rows = stmnt.all();
-  return rows;
+	const stmnt = db.prepare(sql);
+
+	// Here we assert that the rows conform to the SatelliteRow structure
+	const rows: SatelliteRow[] = stmnt.all() as SatelliteRow[];
+
+	// Convert each row to an array format
+	const compactRows: Array<[string, string, string]> = rows.map((row) => [
+		row.EPOCH,
+		row.TLE_LINE1,
+		row.TLE_LINE2
+	]);
+	return compactRows;
 }
 
 // SERVER MAINTANENCE FUNCTIONS
 
 export async function updateSatcat() {
-  try {
-    console.log('Updating satcat database');
-    const text = await fs.readFile(process.cwd() + '/src/data/satcat.csv', 'utf8');
+	try {
+		console.log('Updating satcat database');
+		const text = await fs.readFile(process.cwd() + '/src/data/satcat.csv', 'utf8');
 
-    const parseResult: ParseResult<{ [key: string]: string }> = Papa.parse(text, { header: true, skipEmptyLines: true });
-    const data = parseResult.data;
+		const parseResult: ParseResult<{ [key: string]: string }> = Papa.parse(text, {
+			header: true,
+			skipEmptyLines: true
+		});
+		const data = parseResult.data;
 
-    db.exec('BEGIN');
-    db.prepare('DELETE FROM satcat').run();
+		db.exec('BEGIN');
+		db.prepare('DELETE FROM satcat').run();
 
-    if (data.length > 0) {
-      const columns = Object.keys(data[0]);
+		if (data.length > 0) {
+			const columns = Object.keys(data[0]);
 
-      // Create named placeholders
-      const placeholders = columns.map(col => "@" + col).join(',');
+			// Create named placeholders
+			const placeholders = columns.map((col) => '@' + col).join(',');
 
-      const query = `INSERT INTO satcat (${columns.join(',')}) VALUES (${placeholders})`;
-      const insert = db.prepare(query);
+			const query = `INSERT INTO satcat (${columns.join(',')}) VALUES (${placeholders})`;
+			const insert = db.prepare(query);
 
-      for (const row of data) {
+			for (const row of data) {
+				// Convert row to an object with proper named parameters
+				const params: { [key: string]: string | null } = {};
+				columns.forEach((col, index) => {
+					params[col] = row[col] === '' ? null : row[col];
+				});
 
-        // Convert row to an object with proper named parameters
-        const params: { [key: string]: string | null } = {};
-        columns.forEach((col, index) => {
-          params[col] = row[col] === '' ? null : row[col];
-        });
+				insert.run(params);
+			}
+		}
 
-        insert.run(params);
-      }
-    }
-
-    db.exec('COMMIT');
-  } catch (err) {
-    console.error(err);
-    db.exec('ROLLBACK');
-  }
-};
-
-export async function updateGP() {
-  try {
-    console.log('Updating gp database');
-    const text = await fs.readFile(process.cwd() + '/src/data/gp.csv', 'utf8');
-
-    const parseResult: ParseResult<{ [key: string]: string }> = Papa.parse(text, { header: true, skipEmptyLines: true });
-    const data = parseResult.data;
-
-    db.exec('BEGIN');
-    db.prepare('DELETE FROM gp').run();
-
-    if (data.length > 0) {
-      const columns = Object.keys(data[0]);
-
-      // Create named placeholders
-      const placeholders = columns.map(col => "@" + col).join(',');
-
-      const query = `INSERT INTO gp (${columns.join(',')}) VALUES (${placeholders})`;
-      const insert = db.prepare(query);
-
-      for (const row of data) {
-
-        // Convert row to an object with proper named parameters
-        const params: { [key: string]: string | null } = {};
-        columns.forEach((col, index) => {
-          params[col] = row[col] === '' ? null : row[col];
-        });
-
-        insert.run(params);
-      }
-    }
-
-    db.exec('COMMIT');
-  }
-  catch (err) {
-    console.error(err);
-  }
+		db.exec('COMMIT');
+	} catch (err) {
+		console.error(err);
+		db.exec('ROLLBACK');
+	}
 }
 
+export async function updateGP() {
+	try {
+		console.log('Updating gp database');
+		const text = await fs.readFile(process.cwd() + '/src/data/gp.csv', 'utf8');
+
+		const parseResult: ParseResult<{ [key: string]: string }> = Papa.parse(text, {
+			header: true,
+			skipEmptyLines: true
+		});
+		const data = parseResult.data;
+
+		db.exec('BEGIN');
+		db.prepare('DELETE FROM gp').run();
+
+		if (data.length > 0) {
+			const columns = Object.keys(data[0]);
+
+			// Create named placeholders
+			const placeholders = columns.map((col) => '@' + col).join(',');
+
+			const query = `INSERT INTO gp (${columns.join(',')}) VALUES (${placeholders})`;
+			const insert = db.prepare(query);
+
+			for (const row of data) {
+				// Convert row to an object with proper named parameters
+				const params: { [key: string]: string | null } = {};
+				columns.forEach((col, index) => {
+					params[col] = row[col] === '' ? null : row[col];
+				});
+
+				insert.run(params);
+			}
+		}
+
+		db.exec('COMMIT');
+	} catch (err) {
+		console.error(err);
+	}
+}
 
 export async function updateBoxscore() {
-  try {
-    console.log('Updating boxscore database');
-    const text = await fs.readFile(process.cwd() + '/src/data/boxscore.csv', 'utf8');
+	try {
+		console.log('Updating boxscore database');
+		const text = await fs.readFile(process.cwd() + '/src/data/boxscore.csv', 'utf8');
 
-    const parseResult: ParseResult<{ [key: string]: string }> = Papa.parse(text, { header: true, skipEmptyLines: true });
-    const data = parseResult.data;
+		const parseResult: ParseResult<{ [key: string]: string }> = Papa.parse(text, {
+			header: true,
+			skipEmptyLines: true
+		});
+		const data = parseResult.data;
 
-    db.exec('BEGIN');
-    db.prepare('DELETE FROM boxscore').run();
+		db.exec('BEGIN');
+		db.prepare('DELETE FROM boxscore').run();
 
-    if (data.length > 0) {
-      const columns = Object.keys(data[0]);
+		if (data.length > 0) {
+			const columns = Object.keys(data[0]);
 
-      // Create named placeholders
-      const placeholders = columns.map(col => "@" + col).join(',');
+			// Create named placeholders
+			const placeholders = columns.map((col) => '@' + col).join(',');
 
-      const query = `INSERT INTO boxscore (${columns.join(',')}) VALUES (${placeholders})`;
-      const insert = db.prepare(query);
+			const query = `INSERT INTO boxscore (${columns.join(',')}) VALUES (${placeholders})`;
+			const insert = db.prepare(query);
 
-      for (const row of data) {
+			for (const row of data) {
+				// Convert row to an object with proper named parameters
+				const params: { [key: string]: string | null } = {};
+				columns.forEach((col, index) => {
+					params[col] = row[col] === '' ? null : row[col];
+				});
 
-        // Convert row to an object with proper named parameters
-        const params: { [key: string]: string | null } = {};
-        columns.forEach((col, index) => {
-          params[col] = row[col] === '' ? null : row[col];
-        });
+				insert.run(params);
+			}
+		}
 
-        insert.run(params);
-      }
-    }
-
-    db.exec('COMMIT');
-  }
-  catch (err) {
-    console.error(err);
-  }
+		db.exec('COMMIT');
+	} catch (err) {
+		console.error(err);
+	}
 }
 
 async function getSpaceTrackCookie(username: string, password: string): Promise<string> {
-  const loginUrl = 'https://www.space-track.org/ajaxauth/login';
-  const credentials = `identity=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
+	const loginUrl = 'https://www.space-track.org/ajaxauth/login';
+	const credentials = `identity=${encodeURIComponent(username)}&password=${encodeURIComponent(
+		password
+	)}`;
 
-  const response = await fetch(loginUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded'
-    },
-    body: credentials
-  });
+	const response = await fetch(loginUrl, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/x-www-form-urlencoded'
+		},
+		body: credentials
+	});
 
-  // Check if the login is successful
-  if (!response.ok) {
-    throw new Error('Login failed');
-  }
+	// Check if the login is successful
+	if (!response.ok) {
+		throw new Error('Login failed');
+	}
 
-  const cookie = response.headers.get('Set-Cookie');
-  if (cookie === null) {
-    throw new Error('Failed to retrieve cookie');
-  }
+	const cookie = response.headers.get('Set-Cookie');
+	if (cookie === null) {
+		throw new Error('Failed to retrieve cookie');
+	}
 
-  return cookie;
+	return cookie;
 }
 
 async function fetchSpaceTrackData(cookie: string, url: string): Promise<string> {
-  const response = await fetch(url, {
-    headers: {
-      'Cookie': cookie
-    }
-  });
+	const response = await fetch(url, {
+		headers: {
+			Cookie: cookie
+		}
+	});
 
-  if (!response.ok) {
-    throw new Error(`Failed to fetch data: ${response.statusText}`);
-  }
+	if (!response.ok) {
+		throw new Error(`Failed to fetch data: ${response.statusText}`);
+	}
 
-  return response.text();
+	return response.text();
 }
 
 export async function updateCSVs(username: string, password: string) {
-  try {
-    const cookie = await getSpaceTrackCookie(username, password);
+	try {
+		const cookie = await getSpaceTrackCookie(username, password);
 
-    const datasets = [
-      'satcat',
-      'gp',
-      'boxscore'
-    ];
-    for (const [index, dataset] of datasets.entries()) {
-      const data = await fetchSpaceTrackData(cookie, 'https://www.space-track.org/basicspacedata/query/class/' + dataset + '/format/csv');
-      await fs.writeFile(`${process.cwd()}/src/data/${dataset}.csv`, data, 'utf8');
-    }
-
-  } catch (err) {
-    console.error("Error updating CSVs:", err);
-  }
+		const datasets = ['satcat', 'gp', 'boxscore'];
+		for (const [index, dataset] of datasets.entries()) {
+			const data = await fetchSpaceTrackData(
+				cookie,
+				'https://www.space-track.org/basicspacedata/query/class/' + dataset + '/format/csv'
+			);
+			await fs.writeFile(`${process.cwd()}/src/data/${dataset}.csv`, data, 'utf8');
+		}
+	} catch (err) {
+		console.error('Error updating CSVs:', err);
+	}
 }
 
 export async function checkpoint() {
-  try {
-    console.log('Triggering database checkpoint');
-    await db.pragma('wal_checkpoint(TRUNCATE)');
-    console.log('Checkpoint completed');
-  } catch (err) {
-    console.error('Error during checkpoint:', err);
-  }
+	try {
+		console.log('Triggering database checkpoint');
+		await db.pragma('wal_checkpoint(TRUNCATE)');
+		console.log('Checkpoint completed');
+	} catch (err) {
+		console.error('Error during checkpoint:', err);
+	}
+}
+
+export async function refreshData() {
+	let startTime = new Date().getTime();
+	console.log('running database refresh node cron job at time: ', startTime);
+	await updateCSVs(EMAIL, PASSWORD);
+	await updateSatcat();
+	await updateBoxscore();
+	await updateGP();
+	await checkpoint();
+	let endTime = new Date().getTime();
+	console.log('finished database refresh node cron job at time: ', endTime);
+	let timeTaken = (endTime - startTime) / 1000;
+	console.log('Time taken:', timeTaken, 'seconds');
 }

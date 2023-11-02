@@ -1,4 +1,4 @@
-#Dockerfile
+# satellite-oracle-svelte/Dockerfile
 FROM node:latest
 WORKDIR /usr/src/app
 COPY package*.json ./
