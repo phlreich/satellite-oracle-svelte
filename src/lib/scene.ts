@@ -195,7 +195,7 @@ export const createScene = (el: HTMLCanvasElement, satellites: any) => {
         }
     }
 
-    function onMouseClick(event: any) {
+    function handleShortClick(event: any) {
 
         //console.log('click')
         controls.minDistance = 0;
@@ -254,7 +254,14 @@ export const createScene = (el: HTMLCanvasElement, satellites: any) => {
 
         if (duration < shortClickDuration) {
             // It's a short click
-            onMouseClick(mouseDownEvent);
+            handleShortClick(mouseDownEvent);
+        }
+    }
+
+    function onClick(event: any) {
+        if (!event.isMouseDown) {
+            // It's a short click
+            handleShortClick(mouseDownEvent);
         }
     }
 
@@ -306,6 +313,7 @@ export const createScene = (el: HTMLCanvasElement, satellites: any) => {
     window.addEventListener('mousemove', updateMouseCoordinates);
     window.addEventListener('mousedown', onMouseDown, false);
     window.addEventListener('mouseup', onMouseUp, false);
+    window.addEventListener('click', onClick, false);
     // Return cleanup function
     return () => {
         cancelAnimationFrame(animationFrameId); // Cancel the animation loop
@@ -313,6 +321,7 @@ export const createScene = (el: HTMLCanvasElement, satellites: any) => {
         window.removeEventListener('mousemove', updateMouseCoordinates);
         window.removeEventListener('mousedown', onMouseDown);
         window.removeEventListener('mouseup', onMouseUp);
+        window.removeEventListener('click', onClick);
     };
 };
 
