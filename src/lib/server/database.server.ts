@@ -157,22 +157,34 @@ interface SatelliteRow {
 	EPOCH: string;
 	TLE_LINE1: string;
 	TLE_LINE2: string;
+	NORAD_CAT_ID: number;
+	OBJECT_NAME: string;
 }
 
-export async function getSceneData(): Promise<Array<[string, string, string]>> {
+export async function getSceneData(): Promise<Array<[string, string, string, number, string]>> {
 	const sql = `
-  SELECT EPOCH, TLE_LINE1, TLE_LINE2 FROM gp;
-  `;
+	SELECT gp.EPOCH, gp.TLE_LINE1, gp.TLE_LINE2, gp.NORAD_CAT_ID, satcat.OBJECT_NAME
+	FROM gp
+	JOIN satcat ON gp.norad_cat_id = satcat.norad_cat_id
+	WHERE gp.decay_date IS NULL
+	AND satcat.current = 'Y'
+	AND satcat.OBJECT_TYPE = 'PAYLOAD'
+	AND satcat.comment IS NULL
+	ORDER BY satcat.launch ASC;
+  	`;
+
 	const stmnt = db.prepare(sql);
 
 	// Here we assert that the rows conform to the SatelliteRow structure
 	const rows: SatelliteRow[] = stmnt.all() as SatelliteRow[];
 
 	// Convert each row to an array format
-	const compactRows: Array<[string, string, string]> = rows.map((row) => [
+	const compactRows: Array<[string, string, string, number, string]> = rows.map((row) => [
 		row.EPOCH,
 		row.TLE_LINE1,
-		row.TLE_LINE2
+		row.TLE_LINE2,
+		row.NORAD_CAT_ID,
+		row.OBJECT_NAME
 	]);
 	return compactRows;
 }
