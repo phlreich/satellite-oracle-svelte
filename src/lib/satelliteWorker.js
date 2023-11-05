@@ -1,7 +1,7 @@
 // satelliteWorker.js
 import { propagate } from 'satellite.js';
 
-onmessage = (event) => {
+onmessage = async (event) => {
     if (event.data.satellitepositions && event.data.satelliteData) {
         while (true) {
             const currentTime = new Date();
@@ -14,8 +14,8 @@ onmessage = (event) => {
                     event.data.satellitepositions[i * 3 + 2] = position["x"];
                 }
             }
+            // wait a little before updating the positions again
+            await new Promise(r => setTimeout(r, 30));
         }
-        // wait a little
-        setTimeout(() => { } , 20);
     }
 };

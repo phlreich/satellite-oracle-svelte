@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
 import { twoline2satrec, eciToGeodetic, gstime, propagate } from 'satellite.js';
 import Stats from 'three/examples/jsm/libs/stats.module.js';
+import type { Writable } from 'svelte/store';
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(
@@ -43,9 +44,7 @@ const vertexShader = `
     vColor = customColor;
 
     vec4 mvPosition = modelViewMatrix * vec4( position, 1.0 );
-
     gl_PointSize = size * ( 20.0 / -mvPosition.z );
-
     gl_Position = projectionMatrix * mvPosition;
   }
 `;
@@ -92,18 +91,16 @@ const resize = () => {
     camera.updateProjectionMatrix();
 };
 
-export const createScene = (el: HTMLCanvasElement, satellites: any) => {
+export const createScene = (el: HTMLCanvasElement, satellites: any, selectedSatellite: Writable<any>) => {
     const raycaster = new THREE.Raycaster();
     (raycaster.params as any).Points = { threshold: 25 };
     const mouse = new THREE.Vector2();
 
     let lastIntersect: number | undefined;
-    let lastClicked: number | undefined;
     renderer = new THREE.WebGLRenderer({ antialias: true, canvas: el });
     const controls = new OrbitControls(camera, renderer.domElement);
-    // Enable damping (inertia) and set the damping factor
     controls.enableDamping = true;
-    controls.dampingFactor = 0.05;
+    controls.dampingFactor = 0.1;
 
     // Optional: Adjust these for how fast the user can zoom/pan
     controls.zoomSpeed = 1.0;
@@ -194,10 +191,8 @@ export const createScene = (el: HTMLCanvasElement, satellites: any) => {
             lastIntersect = undefined;
         }
     }
-
     function handleShortClick(event: any) {
 
-        //console.log('click')
         controls.minDistance = 0;
 
         mouse.x = (event.clientX / renderer.domElement.clientWidth) * 2 - 1;
@@ -210,8 +205,12 @@ export const createScene = (el: HTMLCanvasElement, satellites: any) => {
             const color = geometry.attributes[
                 'customColor'
             ] as THREE.BufferAttribute;
-            color.setXYZ(index, 0.0, 1.0, 0.0);
+            color.setXYZ(index, 1.0, 0.0, 0.0);
             console.log(satellites[index].slice(-1)[0])
+            selectedSatellite.set({
+                name: satellites[index].slice(-1)[0], 
+                details: (satellites[index][1] + '\n' + satellites[index][2]) 
+            });
             const currentTime = new Date();
             const timeSinceTleEpochMinutes = (currentTime.getTime() - satelliteData[index].epoch.getTime()) / (1000 * 60);
             //@ts-ignore
@@ -224,9 +223,20 @@ export const createScene = (el: HTMLCanvasElement, satellites: any) => {
             //console.log('alt', positionGd['height'])
             color.needsUpdate = true;
 
-            lastClicked = index;
-
+            lerpTarget = new THREE.Vector3(
+                satellitepositions[index * 3],
+                satellitepositions[index * 3 + 1],
+                satellitepositions[index * 3 + 2]
+            );
+            lastIntersect = index;
             drawOrbit(index);
+        }
+        else if (intersects.length > 0 && intersects[0].object.type === 'Mesh') {
+            lerpTarget = intersects[0].object.position;
+            selectedSatellite.set({
+                name: 'Earth', 
+                details: ''
+            });
         }
     }
 
@@ -247,19 +257,15 @@ export const createScene = (el: HTMLCanvasElement, satellites: any) => {
         mouseDownEvent = event;
         startTime = new Date().getTime();
     }
-
+    let lerpTarget: THREE.Vector3 | undefined;
+    let duration: number;
     function onMouseUp() {
-        const duration = new Date().getTime() - startTime;
-        const shortClickDuration = 150;
-
-        if (duration < shortClickDuration) {
-            // It's a short click
-            handleShortClick(mouseDownEvent);
-        }
+        duration = new Date().getTime() - startTime;
     }
 
-    function onClick(event: any) {
-        if (!event.isMouseDown || !event.isMouseUp) {
+    function onClick() {
+        const shortClickDuration = 230;
+        if (duration < shortClickDuration) {
             // It's a short click
             handleShortClick(mouseDownEvent);
         }
@@ -277,11 +283,13 @@ export const createScene = (el: HTMLCanvasElement, satellites: any) => {
             }
         }
     };
+    const lerpToTarget = (target: THREE.Vector3) => {
+        controls.target.lerp(target, 0.1);
+    }
     // Constants for Earth's rotation
     const EARTH_ROTATION_PERIOD = 23.9345 * 60 * 60; // Sidereal day in seconds (23 hours, 56 minutes, 4.1 seconds)
     const DEGREES_PER_SECOND = 360 / EARTH_ROTATION_PERIOD;
     const REFERENCE_TIME = new Date().setUTCHours(0, 0, 0, 0); // Set to the most recent midnight UTC
-
     const animate = () => {
         const onAnimationFrame = () => {
             stats.update();
@@ -292,12 +300,11 @@ export const createScene = (el: HTMLCanvasElement, satellites: any) => {
             earthGeometry.attributes.position.needsUpdate = true;
             geometry.attributes.position.needsUpdate = true;
             hoverColor();
-            if (lastClicked) {
-                controls.target.lerp(new THREE.Vector3(
-                    satellitepositions[lastClicked as number * 3],
-                    satellitepositions[lastClicked as number * 3 + 1],
-                    satellitepositions[lastClicked as number * 3 + 2]
-                ), 0.1);
+            if (lerpTarget) {
+                lerpToTarget(lerpTarget);
+                if (controls.target.distanceTo(lerpTarget) < 10) {
+                    lerpTarget = undefined;
+                }
             }
             controls.update();
             renderer.render(scene, camera);
