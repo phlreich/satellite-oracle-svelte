@@ -3,6 +3,8 @@ services:
   app:
     build:
       context: .
+    volumes:
+      - ./src/data:/app/src/data
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
       interval: 10s

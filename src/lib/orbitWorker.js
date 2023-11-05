@@ -1,6 +1,6 @@
 // @ts-nocheck
 // orbitWorker.js
-import { sgp4, propagate } from 'satellite.js';
+import { propagate } from 'satellite.js';
 
 onmessage = async (event) => {
     const { satelliteIndex, satelliteData, satellites } = event.data;

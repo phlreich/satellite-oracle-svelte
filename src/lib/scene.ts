@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
-import { sgp4, twoline2satrec, eciToGeodetic, gstime, propagate } from 'satellite.js';
+import { twoline2satrec, eciToGeodetic, gstime, propagate } from 'satellite.js';
 import Stats from 'three/examples/jsm/libs/stats.module.js';
 
 const scene = new THREE.Scene();
@@ -259,14 +259,14 @@ export const createScene = (el: HTMLCanvasElement, satellites: any) => {
     }
 
     function onClick(event: any) {
-        if (!event.isMouseDown) {
+        if (!event.isMouseDown || !event.isMouseUp) {
             // It's a short click
             handleShortClick(mouseDownEvent);
         }
     }
 
     const updateSatellitePositions = () => {
-        const currentTime = new Date();
+        const currentTime = new Date(); 
         for (let i = 0; i < N; i++) {
             const positionAndVelocity = propagate(satelliteData[i].satrec, currentTime);
             const position = positionAndVelocity.position;
