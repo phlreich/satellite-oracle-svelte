@@ -91,9 +91,9 @@ const resize = () => {
     camera.updateProjectionMatrix();
 };
 
-export const createScene = (el: HTMLCanvasElement, satellites: any, selectedSatellite: Writable<any>) => {
+export const createScene = async (el: HTMLCanvasElement, satellites: any, selectedSatellite: Writable<any>) => {
     const raycaster = new THREE.Raycaster();
-    (raycaster.params as any).Points = { threshold: 25 };
+    (raycaster.params as any).Points = { threshold: 20 };
     const mouse = new THREE.Vector2();
 
     let lastIntersect: number | undefined;
@@ -103,8 +103,9 @@ export const createScene = (el: HTMLCanvasElement, satellites: any, selectedSate
     controls.dampingFactor = 0.1;
 
     // Optional: Adjust these for how fast the user can zoom/pan
-    controls.zoomSpeed = 1.0;
-    controls.panSpeed = 1.0;
+    controls.zoomSpeed = 0.4;
+    controls.panSpeed = 0.4;
+    controls.rotateSpeed = 0.4;
     controls.maxDistance = 1000000;
     controls.minDistance = 7000;
 
@@ -192,7 +193,8 @@ export const createScene = (el: HTMLCanvasElement, satellites: any, selectedSate
         }
     }
     function handleShortClick(event: any) {
-
+        lerpTarget = undefined;
+        trackTarget = undefined;
         controls.minDistance = 0;
 
         mouse.x = (event.clientX / renderer.domElement.clientWidth) * 2 - 1;
@@ -206,10 +208,10 @@ export const createScene = (el: HTMLCanvasElement, satellites: any, selectedSate
                 'customColor'
             ] as THREE.BufferAttribute;
             color.setXYZ(index, 1.0, 0.0, 0.0);
-            console.log(satellites[index].slice(-1)[0])
+            // console.log(satellites[index].slice(-1)[0])
             selectedSatellite.set({
-                name: satellites[index].slice(-1)[0], 
-                details: (satellites[index][1] + '\n' + satellites[index][2]) 
+                name: satellites[index].slice(-1)[0],
+                details: (satellites[index][1] + '\n' + satellites[index][2])
             });
             const currentTime = new Date();
             const timeSinceTleEpochMinutes = (currentTime.getTime() - satelliteData[index].epoch.getTime()) / (1000 * 60);
@@ -223,18 +225,19 @@ export const createScene = (el: HTMLCanvasElement, satellites: any, selectedSate
             //console.log('alt', positionGd['height'])
             color.needsUpdate = true;
 
-            lerpTarget = new THREE.Vector3(
-                satellitepositions[index * 3],
-                satellitepositions[index * 3 + 1],
-                satellitepositions[index * 3 + 2]
-            );
+            lerpTarget = {"type": "satellite", "indeces": [index * 3, index * 3 + 1, index * 3 + 2], "position": undefined};
+                [
+                index * 3,
+                index * 3 + 1,
+                index * 3 + 2
+            ];
             lastIntersect = index;
             drawOrbit(index);
         }
         else if (intersects.length > 0 && intersects[0].object.type === 'Mesh') {
-            lerpTarget = intersects[0].object.position;
+            lerpTarget = { type: 'body', indeces: undefined, position: intersects[0].object.position};
             selectedSatellite.set({
-                name: 'Earth', 
+                name: 'Earth',
                 details: ''
             });
         }
@@ -257,7 +260,8 @@ export const createScene = (el: HTMLCanvasElement, satellites: any, selectedSate
         mouseDownEvent = event;
         startTime = new Date().getTime();
     }
-    let lerpTarget: THREE.Vector3 | undefined;
+    let lerpTarget: { type: string, indeces: Array<number> | undefined, position: THREE.Vector3 | undefined } | undefined;
+    let trackTarget: Array<number> | undefined;
     let duration: number;
     function onMouseUp() {
         duration = new Date().getTime() - startTime;
@@ -266,32 +270,39 @@ export const createScene = (el: HTMLCanvasElement, satellites: any, selectedSate
     function onClick() {
         const shortClickDuration = 230;
         if (duration < shortClickDuration) {
-            // It's a short click
             handleShortClick(mouseDownEvent);
         }
     }
 
-    const updateSatellitePositions = () => {
-        const currentTime = new Date(); 
-        for (let i = 0; i < N; i++) {
-            const positionAndVelocity = propagate(satelliteData[i].satrec, currentTime);
-            const position = positionAndVelocity.position;
-            if (typeof position === 'object' && position !== null) {
-                satellitepositions[i * 3] = position["y"];
-                satellitepositions[i * 3 + 1] = position["z"];
-                satellitepositions[i * 3 + 2] = position["x"];
+    const lerpToTarget = (target: THREE.Vector3) => {
+        trackTarget = undefined;
+        controls.target.lerp(target, 0.1);
+    }
+    let previousSatellitePosition: THREE.Vector3 | undefined;
+
+    const trackToTarget = (target: THREE.Vector3) => {
+        if (!previousSatellitePosition) {
+            previousSatellitePosition = target.clone();
+            return;
+        }
+
+        if (previousSatellitePosition) {
+            controls.target.set(target.x, target.y, target.z);
+            const movementVector = new THREE.Vector3().subVectors(target, previousSatellitePosition);
+            // camera.position.add(movementVector);
+            previousSatellitePosition = target.clone();
+            const cameraposition = camera.position.clone();
+            if (movementVector.length() < 2) {
+                camera.position.set(cameraposition.x + movementVector.x, cameraposition.y + movementVector.y, cameraposition.z + movementVector.z);
             }
         }
     };
-    const lerpToTarget = (target: THREE.Vector3) => {
-        controls.target.lerp(target, 0.1);
-    }
     // Constants for Earth's rotation
     const EARTH_ROTATION_PERIOD = 23.9345 * 60 * 60; // Sidereal day in seconds (23 hours, 56 minutes, 4.1 seconds)
     const DEGREES_PER_SECOND = 360 / EARTH_ROTATION_PERIOD;
     const REFERENCE_TIME = new Date().setUTCHours(0, 0, 0, 0); // Set to the most recent midnight UTC
     const animate = () => {
-        const onAnimationFrame = () => {
+        const onAnimationFrame = async () => {
             stats.update();
             const currentTime = new Date().getTime();
             const delta = (currentTime - REFERENCE_TIME) / 1000;
@@ -300,11 +311,29 @@ export const createScene = (el: HTMLCanvasElement, satellites: any, selectedSate
             earthGeometry.attributes.position.needsUpdate = true;
             geometry.attributes.position.needsUpdate = true;
             hoverColor();
-            if (lerpTarget) {
-                lerpToTarget(lerpTarget);
-                if (controls.target.distanceTo(lerpTarget) < 10) {
-                    lerpTarget = undefined;
+            if (lerpTarget && !trackTarget) {
+                if (lerpTarget.type === 'satellite' && lerpTarget.indeces) {
+                    const lerpTargetVector = new THREE.Vector3(
+                        satellitepositions[lerpTarget.indeces[0]],
+                        satellitepositions[lerpTarget.indeces[1]],
+                        satellitepositions[lerpTarget.indeces[2]]
+                    );
+                    lerpToTarget(lerpTargetVector);
+                    if (controls.target.distanceTo(lerpTargetVector) < 1) {
+                        trackTarget = lerpTarget.indeces;
+                        lerpTarget = undefined;
+                    }
+                } else if (lerpTarget.type === 'body' && lerpTarget.position) {
+                    lerpToTarget(lerpTarget.position);
+                    if (controls.target.distanceTo(lerpTarget.position) < 1) {
+                        trackTarget = undefined;
+                        lerpTarget = undefined;
+                    }
                 }
+            }
+            else if (trackTarget) {
+                const trackTargetVector = new THREE.Vector3(satellitepositions[trackTarget[0]], satellitepositions[trackTarget[1]], satellitepositions[trackTarget[2]]);
+                trackToTarget(trackTargetVector);
             }
             controls.update();
             renderer.render(scene, camera);
@@ -314,7 +343,7 @@ export const createScene = (el: HTMLCanvasElement, satellites: any, selectedSate
     };
     resize();
     // TODO find out why removing the following line breaks hovercolor and click
-    updateSatellitePositions();
+    await new Promise(r => setTimeout(r, 400));
     animate();
 
     window.addEventListener('mousemove', updateMouseCoordinates);

@@ -13,8 +13,9 @@
 	const selectedSatellite = writable<{ name: string; details: object } | null>(null);
 	const inputValue = writable('');
 	onMount(() => {
-		// Pass the selectedSatellite store to the createScene function
-		cleanup = createScene(el, data.sceneData, selectedSatellite);
+		createScene(el, data.sceneData, selectedSatellite).then((cleanupFunction) => {
+			cleanup = cleanupFunction;
+		});
 	});
 
 	onDestroy(() => {
@@ -30,7 +31,7 @@
 <canvas bind:this={el}></canvas>
 
 <!-- Floating info panel for selected satellite -->
-<div class="satellite-info {$selectedSatellite ? 'visible' : 'hidden'}">
+<div class="satellite-info {$selectedSatellite ? 'visible' : 'hidden'}" on:click|stopPropagation>
 	{#if $selectedSatellite}
 		<!-- Display your satellite information here -->
 		<h2>{$selectedSatellite.name}</h2>
@@ -77,7 +78,6 @@
 		padding: 10px;
 		border-radius: 5px;
 		border: 1px solid white;
-		pointer-events: none; /* So it doesn't interfere with canvas interactions */
 	}
 	.visible {
 		display: block;
