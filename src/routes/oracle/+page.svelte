@@ -1,3 +1,4 @@
+<!-- svelte-ignore a11y-no-static-element-interactions -->
 <!-- src/routes/oracle/+page.svelte -->
 <script lang="ts">
 	import type { PageData } from './$types';
@@ -31,6 +32,8 @@
 <canvas bind:this={el}></canvas>
 
 <!-- Floating info panel for selected satellite -->
+<!-- svelte-ignore a11y-click-events-have-key-events -->
+<!-- svelte-ignore a11y-no-static-element-interactions -->
 <div class="satellite-info {$selectedSatellite ? 'visible' : 'hidden'}" on:click|stopPropagation>
 	{#if $selectedSatellite}
 		<!-- Display your satellite information here -->
@@ -40,9 +43,9 @@
 </div>
 
 <!-- Floating input field -->
-<div class="input-field" on:click|stopPropagation>
+<!-- <div class="input-field" on:click|stopPropagation>
 	<input type="text" bind:value={$inputValue} placeholder="Type something..." />
-</div>
+</div> -->
 
 <style>
 	.input-field {

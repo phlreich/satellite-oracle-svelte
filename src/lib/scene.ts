@@ -12,9 +12,9 @@ const camera = new THREE.PerspectiveCamera(
     1000000);
 
 const scale = 2 * 6356.7523;
-camera.position.z = scale;
-camera.position.y = scale;
-camera.position.x = scale;
+camera.position.z = scale * 0.5;
+camera.position.y = scale * 0.5;
+camera.position.x = scale * 0.5;
 
 let renderer: THREE.WebGLRenderer;
 let animationFrameId: number;
@@ -92,6 +92,13 @@ const resize = () => {
 };
 
 export const createScene = async (el: HTMLCanvasElement, satellites: any, selectedSatellite: Writable<any>) => {
+    let audioFlag = true;
+    const playAudio = () => {
+        audioFlag = false;
+        const audio = new Audio('/threnody.mp3');
+        audio.play();
+    }
+
     const raycaster = new THREE.Raycaster();
     (raycaster.params as any).Points = { threshold: 20 };
     const mouse = new THREE.Vector2();
@@ -225,8 +232,8 @@ export const createScene = async (el: HTMLCanvasElement, satellites: any, select
             //console.log('alt', positionGd['height'])
             color.needsUpdate = true;
 
-            lerpTarget = {"type": "satellite", "indeces": [index * 3, index * 3 + 1, index * 3 + 2], "position": undefined};
-                [
+            lerpTarget = { "type": "satellite", "indeces": [index * 3, index * 3 + 1, index * 3 + 2], "position": undefined };
+            [
                 index * 3,
                 index * 3 + 1,
                 index * 3 + 2
@@ -235,7 +242,7 @@ export const createScene = async (el: HTMLCanvasElement, satellites: any, select
             drawOrbit(index);
         }
         else if (intersects.length > 0 && intersects[0].object.type === 'Mesh') {
-            lerpTarget = { type: 'body', indeces: undefined, position: intersects[0].object.position};
+            lerpTarget = { type: 'body', indeces: undefined, position: intersects[0].object.position };
             selectedSatellite.set({
                 name: 'Earth',
                 details: ''
@@ -268,6 +275,9 @@ export const createScene = async (el: HTMLCanvasElement, satellites: any, select
     }
 
     function onClick() {
+        if (audioFlag) {
+            playAudio();
+        }
         const shortClickDuration = 230;
         if (duration < shortClickDuration) {
             handleShortClick(mouseDownEvent);
