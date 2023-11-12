@@ -22,6 +22,34 @@
 	onDestroy(() => {
 		if (cleanup) cleanup();
 	});
+
+	async function runQuery(query: string) {
+		try {
+			const response = await fetch('/api/query', {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json'
+				},
+				body: JSON.stringify({ query })
+			});
+
+			if (!response.ok) {
+				throw new Error(`HTTP error! Status: ${response.status}`);
+			}
+
+			const data = await response.json();
+			return data;
+		} catch (error) {
+			console.error('Error running query: ', error);
+		}
+	}
+	async function handleKeyUp(event: { key: string }) {
+		if (event.key === 'Enter') {
+			console.log('Running query:', $inputValue);
+			const result = await runQuery($inputValue);
+			console.log('Query result:', result);
+		}
+	}
 </script>
 
 <svelte:head>
@@ -43,9 +71,11 @@
 </div>
 
 <!-- Floating input field -->
-<!-- <div class="input-field" on:click|stopPropagation>
-	<input type="text" bind:value={$inputValue} placeholder="Type something..." />
-</div> -->
+<!-- svelte-ignore a11y-click-events-have-key-events -->
+<!-- svelte-ignore a11y-no-static-element-interactions -->
+<div class="input-field" on:click|stopPropagation>
+	<input type="text" bind:value={$inputValue} placeholder="Type something..." on:keyup={handleKeyUp}/>
+</div>
 
 <style>
 	.input-field {
@@ -54,7 +84,7 @@
 		right: 10px;
 		width: 500px;
 		color: white;
-		background: rgba(0, 0, 0, 0.5);
+		background: rgba(0, 0, 0, 0.9);
 		padding: 10px;
 		border-radius: 5px;
 		border: 1px solid white;
@@ -77,7 +107,7 @@
 		bottom: 10px;
 		left: 10px;
 		color: white;
-		background: rgba(0, 0, 0, 0.5);
+		background: rgba(0, 0, 0, 0.9);
 		padding: 10px;
 		border-radius: 5px;
 		border: 1px solid white;

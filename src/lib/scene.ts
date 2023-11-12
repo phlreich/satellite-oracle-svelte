@@ -27,7 +27,7 @@ const initialMaterial = new THREE.MeshBasicMaterial({ color: 0x005f9a });
 const earthMesh = new THREE.Mesh(earthGeometry, initialMaterial);
 scene.add(earthMesh);
 const textureLoader = new THREE.TextureLoader();
-textureLoader.load('/earth-compressed.webp', (texture) => {
+textureLoader.load('/earth.webp', (texture) => {
     texture.colorSpace = THREE.SRGBColorSpace;
     earthMesh.material = new THREE.MeshBasicMaterial({ map: texture });
     earthMesh.material.needsUpdate = true;
@@ -37,15 +37,20 @@ textureLoader.load('/earth-compressed.webp', (texture) => {
 const vertexShader = `
   attribute float size;
   attribute vec3 customColor;
+  attribute float visibility;
 
   varying vec3 vColor;
 
   void main() {
-    vColor = customColor;
-
-    vec4 mvPosition = modelViewMatrix * vec4( position, 1.0 );
-    gl_PointSize = size * ( 20.0 / -mvPosition.z );
-    gl_Position = projectionMatrix * mvPosition;
+    if (visibility < 0.5) {
+        gl_Position = vec4(0.0, 0.0, 0.0, 0.0);
+        return;
+    } else {
+        vColor = customColor;
+        vec4 mvPosition = modelViewMatrix * vec4( position, 1.0 );
+        gl_PointSize = size * ( 20.0 / -mvPosition.z );
+        gl_Position = projectionMatrix * mvPosition;
+    }
   }
 `;
 
@@ -118,8 +123,11 @@ export const createScene = async (el: HTMLCanvasElement, satellites: any, select
 
     // initialize satellite positions
     const N = satellites.length;
-    const sharedBuffer = new SharedArrayBuffer(N * 3 * Float32Array.BYTES_PER_ELEMENT);
-    const satellitepositions = new Float32Array(sharedBuffer);
+    const sharedBufferPositions = new SharedArrayBuffer(N * 3 * Float32Array.BYTES_PER_ELEMENT);
+    const sharedBuffervisibility = new SharedArrayBuffer(N * 1 * Float32Array.BYTES_PER_ELEMENT);
+    const satellitepositions = new Float32Array(sharedBufferPositions);
+    const visibility = new Float32Array(sharedBuffervisibility);
+
     const colors = new Float32Array(N * 3); // three components per color
     const sizes = new Float32Array(N); // one component per size
     for (let i = 0; i < N; i++) {
@@ -140,8 +148,8 @@ export const createScene = async (el: HTMLCanvasElement, satellites: any, select
 
     const orbitWorker = new Worker(new URL('./orbitWorker.js', import.meta.url), { type: 'module' });
 
-    satelliteWorker1.postMessage({ start: 0, end: N / 2 | 0, satellitepositions, satelliteData });
-    satelliteWorker2.postMessage({ start: N / 2 | 0, end: N, satellitepositions, satelliteData });
+    satelliteWorker1.postMessage({ start: 0, end: N / 2 | 0, satellitepositions, satelliteData, visibility });
+    satelliteWorker2.postMessage({ start: N / 2 | 0, end: N, satellitepositions, satelliteData, visibility });
 
     // destroy satellites
     // satellites = undefined;
@@ -150,6 +158,7 @@ export const createScene = async (el: HTMLCanvasElement, satellites: any, select
     geometry.setAttribute('position', new THREE.BufferAttribute(satellitepositions, 3));
     geometry.setAttribute('customColor', new THREE.BufferAttribute(colors, 3));
     geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+    geometry.setAttribute('visibility', new THREE.BufferAttribute(visibility, 1));
     const points = new THREE.Points(geometry, satelliteMaterial);
     scene.add(points);
 
@@ -200,8 +209,6 @@ export const createScene = async (el: HTMLCanvasElement, satellites: any, select
         }
     }
     function handleShortClick(event: any) {
-        lerpTarget = undefined;
-        trackTarget = undefined;
         controls.minDistance = 0;
 
         mouse.x = (event.clientX / renderer.domElement.clientWidth) * 2 - 1;
@@ -209,44 +216,48 @@ export const createScene = async (el: HTMLCanvasElement, satellites: any, select
 
         raycaster.setFromCamera(mouse, camera);
         const intersects = raycaster.intersectObjects(scene.children, true);
-        if (intersects.length > 0 && intersects[0].object.type === 'Points') {
-            const index = intersects[0].index as number;
-            const color = geometry.attributes[
-                'customColor'
-            ] as THREE.BufferAttribute;
-            color.setXYZ(index, 1.0, 0.0, 0.0);
-            // console.log(satellites[index].slice(-1)[0])
-            selectedSatellite.set({
-                name: satellites[index].slice(-1)[0],
-                details: (satellites[index][1] + '\n' + satellites[index][2])
-            });
-            const currentTime = new Date();
-            const timeSinceTleEpochMinutes = (currentTime.getTime() - satelliteData[index].epoch.getTime()) / (1000 * 60);
-            //@ts-ignore
-            const positionGd = eciToGeodetic(propagate(satelliteData[index].satrec, currentTime).position, gstime(currentTime));
-            //@ts-ignore
-            //console.log('lat', positionGd['latitude'] * 57, 2958)
-            ////@ts-ignore
-            //console.log('lon', positionGd['longitude'] * 57, 2958)
-            ////@ts-ignore
-            //console.log('alt', positionGd['height'])
-            color.needsUpdate = true;
+        if (intersects.length > 0) {
+            lerpTarget = undefined;
+            trackTarget = undefined;
+            if (intersects[0].object.type === 'Points') {
+                const index = intersects[0].index as number;
+                const color = geometry.attributes[
+                    'customColor'
+                ] as THREE.BufferAttribute;
+                color.setXYZ(index, 1.0, 0.0, 0.0);
+                // console.log(satellites[index].slice(-1)[0])
+                selectedSatellite.set({
+                    name: satellites[index].slice(-1)[0],
+                    details: (satellites[index][1] + '\n' + satellites[index][2])
+                });
+                const currentTime = new Date();
+                const timeSinceTleEpochMinutes = (currentTime.getTime() - satelliteData[index].epoch.getTime()) / (1000 * 60);
+                //@ts-ignore
+                const positionGd = eciToGeodetic(propagate(satelliteData[index].satrec, currentTime).position, gstime(currentTime));
+                //@ts-ignore
+                //console.log('lat', positionGd['latitude'] * 57, 2958)
+                ////@ts-ignore
+                //console.log('lon', positionGd['longitude'] * 57, 2958)
+                ////@ts-ignore
+                //console.log('alt', positionGd['height'])
+                color.needsUpdate = true;
 
-            lerpTarget = { "type": "satellite", "indeces": [index * 3, index * 3 + 1, index * 3 + 2], "position": undefined };
-            [
-                index * 3,
-                index * 3 + 1,
-                index * 3 + 2
-            ];
-            lastIntersect = index;
-            drawOrbit(index);
-        }
-        else if (intersects.length > 0 && intersects[0].object.type === 'Mesh') {
-            lerpTarget = { type: 'body', indeces: undefined, position: intersects[0].object.position };
-            selectedSatellite.set({
-                name: 'Earth',
-                details: ''
-            });
+                lerpTarget = { "type": "satellite", "indeces": [index * 3, index * 3 + 1, index * 3 + 2], "position": undefined };
+                [
+                    index * 3,
+                    index * 3 + 1,
+                    index * 3 + 2
+                ];
+                lastIntersect = index;
+                drawOrbit(index);
+            }
+            else if (intersects[0].object.type === 'Mesh') {
+                lerpTarget = { type: 'body', indeces: undefined, position: intersects[0].object.position };
+                selectedSatellite.set({
+                    name: 'Earth',
+                    details: ''
+                });
+            }
         }
     }
 
@@ -286,7 +297,7 @@ export const createScene = async (el: HTMLCanvasElement, satellites: any, select
 
     const lerpToTarget = (target: THREE.Vector3) => {
         trackTarget = undefined;
-        controls.target.lerp(target, 0.1);
+        controls.target.lerp(target, 0.05);
     }
     let previousSatellitePosition: THREE.Vector3 | undefined;
 

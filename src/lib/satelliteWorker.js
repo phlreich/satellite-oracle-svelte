@@ -6,6 +6,7 @@ onmessage = async (event) => {
         while (true) {
             const currentTime = new Date();
             for (let i = event.data.start; i < event.data.end; i++) {
+                if (event.data.visibility[i] > 0) { // we only need to update the positions of satellites that are visible
                 const positionAndVelocity = propagate(event.data.satelliteData[i].satrec, currentTime);
                 const position = positionAndVelocity.position;
                 if (typeof position === 'object' && position !== null) {
@@ -15,7 +16,8 @@ onmessage = async (event) => {
                 }
             }
             // wait a little before updating the positions again
-            await new Promise(r => setTimeout(r, 30));
+            await new Promise(r => setTimeout(r, 20));
+            }
         }
     }
 };
