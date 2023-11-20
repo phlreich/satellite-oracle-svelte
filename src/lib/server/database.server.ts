@@ -8,6 +8,7 @@ import nfs from 'fs';
 import path from 'path';
 import { EMAIL, PASSWORD } from '$env/static/private';
 import { setCache } from './cache.js';
+import { Parser } from 'node-sql-parser';
 
 const DB_PATH = path.join(process.cwd(), 'src/data/satellite.db');
 
@@ -191,9 +192,51 @@ export async function getSceneData(): Promise<Array<[string, string, string, num
 }
 
 export function runQuery(query: string): any {
-	const stmnt = db.prepare(query);
-	return stmnt.all();
+	// parse to ensure only select statements are allowed
+	// a better solution might be a read-only user, but this is not supported by sqlite
+	const parser = new Parser();
+	const opt = {
+		database: 'sqlite'
+	};
+
+	const ast = parser.astify(query, opt);
+
+	if (Array.isArray(ast) && ast[0].type !== 'select') {
+		throw new Error('Only SELECT statements are allowed, offending query:' + query);
+	} else if (!Array.isArray(ast) && ast.type !== 'select') {
+		throw new Error('Only SELECT statements are allowed, offending query:' + query);
+	}
+
+	try {
+		const stmnt = db.prepare(query);
+		return stmnt.all();
+	} catch (err) {
+		console.error(err);
+		return err;
+	}
 }
+
+/* export function queryToIndicesQuery(query: string): string {
+	try {
+		const parser = new Parser();
+		const opt = {
+			database: 'sqlite'
+		};
+		const queryAST = parser.astify(query, opt);
+
+		const indicesQueryTemplate =
+			'SELECT `rownum` FROM (SELECT ROW_NUMBER() OVER (ORDER BY `NORAD_CAT_ID` ASC) AS `rownum`, * FROM `gp`) AS `subquery` WHERE `APOAPSIS` < 1000000';
+		let indicesAST = parser.astify(indicesQueryTemplate, opt);
+
+		indicesAST[0].where = queryAST.where;
+		const indicesQuery = parser.sqlify(indicesAST, opt);
+		console.log('indicesquery', indicesQuery);
+		return indicesQuery;
+	} catch (err) {
+		console.error(err);
+		return '';
+	}
+} */
 
 // SERVER MAINTANENCE FUNCTIONS
 
@@ -318,12 +361,12 @@ export async function updateBoxscore() {
 }
 
 export async function deleteUnusedRows() {
-    try {
-        console.log('Deleting unused rows');
-        db.exec('BEGIN');
+	try {
+		console.log('Deleting unused rows');
+		db.exec('BEGIN');
 
-        // Delete rows from satcat that do not meet the criteria or don't have a corresponding row in gp
-        db.exec(`
+		// Delete rows from satcat that do not meet the criteria or don't have a corresponding row in gp
+		db.exec(`
             DELETE FROM satcat
             WHERE NOT EXISTS (
                 SELECT 1 FROM gp
@@ -335,8 +378,8 @@ export async function deleteUnusedRows() {
             OR comment != ''
         `);
 
-        // Delete rows from gp that do not meet the criteria or don't have a corresponding row in satcat
-        db.exec(`
+		// Delete rows from gp that do not meet the criteria or don't have a corresponding row in satcat
+		db.exec(`
             DELETE FROM gp
             WHERE decay_date IS NOT NULL
             OR NOT EXISTS (
@@ -347,13 +390,12 @@ export async function deleteUnusedRows() {
             )
         `);
 
-        db.exec('COMMIT');
-    } catch (err) {
-        console.error(err);
-        db.exec('ROLLBACK');
-    }
+		db.exec('COMMIT');
+	} catch (err) {
+		console.error(err);
+		db.exec('ROLLBACK');
+	}
 }
-
 
 async function getSpaceTrackCookie(username: string, password: string): Promise<string> {
 	const loginUrl = 'https://www.space-track.org/ajaxauth/login';

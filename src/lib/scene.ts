@@ -6,10 +6,11 @@ import type { Writable } from 'svelte/store';
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(
-    75,
-    window.innerWidth / window.innerHeight,
-    0.1,
-    1000000);
+	75,
+	window.innerWidth / window.innerHeight,
+	0.1,
+	1000000
+);
 
 const scale = 2 * 6356.7523;
 camera.position.z = scale * 0.5;
@@ -28,11 +29,10 @@ const earthMesh = new THREE.Mesh(earthGeometry, initialMaterial);
 scene.add(earthMesh);
 const textureLoader = new THREE.TextureLoader();
 textureLoader.load('/earth.webp', (texture) => {
-    texture.colorSpace = THREE.SRGBColorSpace;
-    earthMesh.material = new THREE.MeshBasicMaterial({ map: texture });
-    earthMesh.material.needsUpdate = true;
+	texture.colorSpace = THREE.SRGBColorSpace;
+	earthMesh.material = new THREE.MeshBasicMaterial({ map: texture });
+	earthMesh.material.needsUpdate = true;
 });
-
 
 const vertexShader = `
   attribute float size;
@@ -75,12 +75,12 @@ const fragmentShader = `
 `;
 
 const satelliteMaterial = new THREE.ShaderMaterial({
-    uniforms: {
-        color: { value: new THREE.Color(0xffffff) },
-        alphaTest: { value: 0.9 },
-    },
-    vertexShader: vertexShader,
-    fragmentShader: fragmentShader,
+	uniforms: {
+		color: { value: new THREE.Color(0xffffff) },
+		alphaTest: { value: 0.9 }
+	},
+	vertexShader: vertexShader,
+	fragmentShader: fragmentShader
 });
 
 // axes helper
@@ -91,295 +91,339 @@ const stats = new Stats();
 document.body.appendChild(stats.dom);
 
 const resize = () => {
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
+	renderer.setSize(window.innerWidth, window.innerHeight);
+	camera.aspect = window.innerWidth / window.innerHeight;
+	camera.updateProjectionMatrix();
 };
 
-export const createScene = async (el: HTMLCanvasElement, satellites: any, selectedSatellite: Writable<any>) => {
-    let audioFlag = true;
-    const playAudio = () => {
-        audioFlag = false;
-        const audio = new Audio('/threnody.mp3');
-        audio.play();
-    }
+export const createScene = async (
+	el: HTMLCanvasElement,
+	satellites: any,
+	selectedSatellite: Writable<any>,
+	sharedData: Writable<any>
+) => {
+	let audioFlag = true;
+	const playAudio = () => {
+		audioFlag = false;
+		const audio = new Audio('/threnody.mp3');
+		audio.play();
+	};
 
-    const raycaster = new THREE.Raycaster();
-    (raycaster.params as any).Points = { threshold: 20 };
-    const mouse = new THREE.Vector2();
+	const raycaster = new THREE.Raycaster();
+	(raycaster.params as any).Points = { threshold: 20 };
+	const mouse = new THREE.Vector2();
 
-    let lastIntersect: number | undefined;
-    renderer = new THREE.WebGLRenderer({ antialias: true, canvas: el });
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-    controls.dampingFactor = 0.1;
+	let lastIntersect: number | undefined;
+	renderer = new THREE.WebGLRenderer({ antialias: true, canvas: el });
+	const controls = new OrbitControls(camera, renderer.domElement);
+	controls.enableDamping = true;
+	controls.dampingFactor = 0.1;
 
-    // Optional: Adjust these for how fast the user can zoom/pan
-    controls.zoomSpeed = 0.4;
-    controls.panSpeed = 0.4;
-    controls.rotateSpeed = 0.4;
-    controls.maxDistance = 1000000;
-    controls.minDistance = 7000;
+	// Optional: Adjust these for how fast the user can zoom/pan
+	controls.zoomSpeed = 0.4;
+	controls.panSpeed = 0.4;
+	controls.rotateSpeed = 0.4;
+	controls.maxDistance = 1000000;
+	controls.minDistance = 7000;
 
-    // initialize satellite positions
-    const N = satellites.length;
-    const sharedBufferPositions = new SharedArrayBuffer(N * 3 * Float32Array.BYTES_PER_ELEMENT);
-    const sharedBuffervisibility = new SharedArrayBuffer(N * 1 * Float32Array.BYTES_PER_ELEMENT);
-    const satellitepositions = new Float32Array(sharedBufferPositions);
-    const visibility = new Float32Array(sharedBuffervisibility);
+	// initialize satellite positions
+	const N = satellites.length;
+	const sharedBufferPositions = new SharedArrayBuffer(N * 3 * Float32Array.BYTES_PER_ELEMENT);
+	const sharedBuffervisibility = new SharedArrayBuffer(N * 1 * Float32Array.BYTES_PER_ELEMENT);
+	const satellitepositions = new Float32Array(sharedBufferPositions);
+	const visibility = new Float32Array(sharedBuffervisibility);
 
-    const colors = new Float32Array(N * 3); // three components per color
-    const sizes = new Float32Array(N); // one component per size
-    for (let i = 0; i < N; i++) {
-        colors[i * 3] = 1.0; // red
-        colors[i * 3 + 1] = 1.0; // green
-        colors[i * 3 + 2] = 1.0; // blue
-        sizes[i] = 1000; // size
-    }
+	const colors = new Float32Array(N * 3); // three components per color
+	const sizes = new Float32Array(N); // one component per size
+	for (let i = 0; i < N; i++) {
+		colors[i * 3] = 1.0; // red
+		colors[i * 3 + 1] = 1.0; // green
+		colors[i * 3 + 2] = 1.0; // blue
+		sizes[i] = 1000; // size
+	}
 
-    const satelliteData = satellites.map((sat: any) => {
-        const [epoch, tleLine1, tleLine2] = sat;
-        const satrec = twoline2satrec(tleLine1, tleLine2);
-        const epochDate = new Date(epoch);
-        return { satrec, epoch: epochDate };
-    });
-    const satelliteWorker1 = new Worker(new URL('./satelliteWorker.js', import.meta.url), { type: 'module' });
-    const satelliteWorker2 = new Worker(new URL('./satelliteWorker.js', import.meta.url), { type: 'module' });
+	visibility.fill(1.0, 0, 100);
 
-    const orbitWorker = new Worker(new URL('./orbitWorker.js', import.meta.url), { type: 'module' });
+	const satelliteData = satellites.map((sat: any) => {
+		const [epoch, tleLine1, tleLine2, norad_cat_id] = sat;
+		const satrec = twoline2satrec(tleLine1, tleLine2);
+		const epochDate = new Date(epoch);
+		return { satrec, epoch: epochDate, norad_cat_id };
+	});
+	const satelliteWorker1 = new Worker(new URL('./satelliteWorker.js', import.meta.url), {
+		type: 'module'
+	});
+	const satelliteWorker2 = new Worker(new URL('./satelliteWorker.js', import.meta.url), {
+		type: 'module'
+	});
 
-    satelliteWorker1.postMessage({ start: 0, end: N / 2 | 0, satellitepositions, satelliteData, visibility });
-    satelliteWorker2.postMessage({ start: N / 2 | 0, end: N, satellitepositions, satelliteData, visibility });
+	const orbitWorker = new Worker(new URL('./orbitWorker.js', import.meta.url), { type: 'module' });
 
-    // destroy satellites
-    // satellites = undefined;
+	satelliteWorker1.postMessage({
+		start: 0,
+		end: (N / 2) | 0,
+		satellitepositions,
+		satelliteData,
+		visibility
+	});
+	satelliteWorker2.postMessage({
+		start: (N / 2) | 0,
+		end: N,
+		satellitepositions,
+		satelliteData,
+		visibility
+	});
 
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(satellitepositions, 3));
-    geometry.setAttribute('customColor', new THREE.BufferAttribute(colors, 3));
-    geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
-    geometry.setAttribute('visibility', new THREE.BufferAttribute(visibility, 1));
-    const points = new THREE.Points(geometry, satelliteMaterial);
-    scene.add(points);
+	const geometry = new THREE.BufferGeometry();
+	geometry.setAttribute('position', new THREE.BufferAttribute(satellitepositions, 3));
+	geometry.setAttribute('customColor', new THREE.BufferAttribute(colors, 3));
+	geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+	geometry.setAttribute('visibility', new THREE.BufferAttribute(visibility, 1));
+	const points = new THREE.Points(geometry, satelliteMaterial);
+	scene.add(points);
 
-    function drawOrbit(satelliteIndex: number) {
-        orbitWorker.postMessage({ satelliteIndex, satelliteData, satellites });
-        orbitWorker.onmessage = (event) => {
-            const orbitPoints = event.data.map((point: { x: number; y: number; z: number; }) => new THREE.Vector3(point.y, point.z, point.x));
-            const geometry = new THREE.BufferGeometry().setFromPoints(orbitPoints);
-            const material = new THREE.LineBasicMaterial({ color: 0x90EE90 });
-            const orbit = new THREE.Line(geometry, material);
-            // remove old orbit
-            scene.children.forEach((child) => {
-                if (child.type === 'Line') {
-                    scene.remove(child);
-                }
-            });
+	function drawOrbit(satelliteIndex: number) {
+		orbitWorker.postMessage({ satelliteIndex, satelliteData, satellites });
+		orbitWorker.onmessage = (event) => {
+			const orbitPoints = event.data.map(
+				(point: { x: number; y: number; z: number }) => new THREE.Vector3(point.y, point.z, point.x)
+			);
+			const geometry = new THREE.BufferGeometry().setFromPoints(orbitPoints);
+			const material = new THREE.LineBasicMaterial({ color: 0x90ee90 });
+			const orbit = new THREE.Line(geometry, material);
+			// remove old orbit
+			scene.children.forEach((child) => {
+				if (child.type === 'Line') {
+					scene.remove(child);
+				}
+			});
 
-            scene.add(orbit);
-        };
-    }
-    (window as any).satelliteData = satelliteData;
-    (window as any).satellites = satellites;
-    function hoverColor() {
+			scene.add(orbit);
+		};
+	}
 
-        raycaster.setFromCamera(mouse, camera);
-        const intersects = raycaster.intersectObjects(scene.children, true);
+	function hoverColor() {
+		raycaster.setFromCamera(mouse, camera);
+		let intersects = raycaster.intersectObjects(scene.children, true);
+		if (intersects.length > 0 && intersects[0].object.type === 'Line') {
+			intersects.shift();
+		}
 
-        if (intersects.length > 0) {
-            if (intersects[0].object.type === 'Points') {
-                const index = intersects[0].index as number;
-                const color = geometry.attributes[
-                    'customColor'
-                ] as THREE.BufferAttribute;
-                color.setXYZ(index, 0.0, 1.0, 0.0);
-                color.needsUpdate = true;
-            }
-            if (lastIntersect) {
-                if (lastIntersect !== intersects[0].index) {
-                    resetLast(lastIntersect);
-                }
-            }
-            lastIntersect = intersects[0].index;
-        } else {
-            if (lastIntersect) {
-                resetLast(lastIntersect);
-            }
-            lastIntersect = undefined;
-        }
-    }
-    function handleShortClick(event: any) {
-        controls.minDistance = 0;
+		if (intersects.length > 0) {
+			if (intersects[0].object.type === 'Points') {
+				const index = intersects[0].index as number;
+				const color = geometry.attributes['customColor'] as THREE.BufferAttribute;
+				color.setXYZ(index, 0.0, 1.0, 0.0);
+				color.needsUpdate = true;
+			}
+			if (lastIntersect) {
+				if (lastIntersect !== intersects[0].index) {
+					resetLast(lastIntersect);
+				}
+			}
+			lastIntersect = intersects[0].index;
+		} else {
+			if (lastIntersect) {
+				resetLast(lastIntersect);
+			}
+			lastIntersect = undefined;
+		}
+	}
+	function handleShortClick(event: any) {
+		controls.minDistance = 0;
 
-        mouse.x = (event.clientX / renderer.domElement.clientWidth) * 2 - 1;
-        mouse.y = -(event.clientY / renderer.domElement.clientHeight) * 2 + 1;
+		mouse.x = (event.clientX / renderer.domElement.clientWidth) * 2 - 1;
+		mouse.y = -(event.clientY / renderer.domElement.clientHeight) * 2 + 1;
 
-        raycaster.setFromCamera(mouse, camera);
-        const intersects = raycaster.intersectObjects(scene.children, true);
-        if (intersects.length > 0) {
-            lerpTarget = undefined;
-            trackTarget = undefined;
-            if (intersects[0].object.type === 'Points') {
-                const index = intersects[0].index as number;
-                const color = geometry.attributes[
-                    'customColor'
-                ] as THREE.BufferAttribute;
-                color.setXYZ(index, 1.0, 0.0, 0.0);
-                // console.log(satellites[index].slice(-1)[0])
-                selectedSatellite.set({
-                    name: satellites[index].slice(-1)[0],
-                    details: (satellites[index][1] + '\n' + satellites[index][2])
-                });
-                const currentTime = new Date();
-                const timeSinceTleEpochMinutes = (currentTime.getTime() - satelliteData[index].epoch.getTime()) / (1000 * 60);
-                //@ts-ignore
-                const positionGd = eciToGeodetic(propagate(satelliteData[index].satrec, currentTime).position, gstime(currentTime));
-                //@ts-ignore
-                //console.log('lat', positionGd['latitude'] * 57, 2958)
-                ////@ts-ignore
-                //console.log('lon', positionGd['longitude'] * 57, 2958)
-                ////@ts-ignore
-                //console.log('alt', positionGd['height'])
-                color.needsUpdate = true;
+		raycaster.setFromCamera(mouse, camera);
+		const intersects = raycaster.intersectObjects(scene.children, true);
+		if (intersects.length > 0 && intersects[0].object.type === 'Line') {
+			intersects.shift();
+		}
+		if (intersects.length > 0) {
+			lerpTarget = undefined;
+			trackTarget = undefined;
+			if (intersects[0].object.type === 'Points') {
+				const index = intersects[0].index as number;
+				const color = geometry.attributes['customColor'] as THREE.BufferAttribute;
+				color.setXYZ(index, 1.0, 0.0, 0.0);
+				selectedSatellite.set({
+					name: satellites[index].slice(-1)[0],
+					details: satellites[index][1] + '\n' + satellites[index][2]
+				});
+				color.needsUpdate = true;
 
-                lerpTarget = { "type": "satellite", "indeces": [index * 3, index * 3 + 1, index * 3 + 2], "position": undefined };
-                [
-                    index * 3,
-                    index * 3 + 1,
-                    index * 3 + 2
-                ];
-                lastIntersect = index;
-                drawOrbit(index);
-            }
-            else if (intersects[0].object.type === 'Mesh') {
-                lerpTarget = { type: 'body', indeces: undefined, position: intersects[0].object.position };
-                selectedSatellite.set({
-                    name: 'Earth',
-                    details: ''
-                });
-            }
-        }
-    }
+				lerpTarget = {
+					type: 'satellite',
+					indeces: [index * 3, index * 3 + 1, index * 3 + 2],
+					position: undefined
+				};
+				[index * 3, index * 3 + 1, index * 3 + 2];
+				lastIntersect = index;
+				drawOrbit(index);
+			} else if (intersects[0].object.type === 'Mesh') {
+				lerpTarget = { type: 'body', indeces: undefined, position: intersects[0].object.position };
+				selectedSatellite.set({
+					name: 'Earth',
+					details: ''
+				});
+			}
+		}
+	}
 
-    function resetLast(lastIntersect: number) {
-        // if the camera is not looking at the point, reset the color
-        const color = geometry.attributes['customColor'] as THREE.BufferAttribute;
-        color.setXYZ(lastIntersect, 1.0, 1.0, 1.0);
-        color.needsUpdate = true;
-    }
+	function resetLast(lastIntersect: number) {
+		// if the camera is not looking at the point, reset the color
+		const color = geometry.attributes['customColor'] as THREE.BufferAttribute;
+		color.setXYZ(lastIntersect, 1.0, 1.0, 1.0);
+		color.needsUpdate = true;
+	}
 
-    function updateMouseCoordinates(event: MouseEvent) {
-        mouse.x = (event.clientX / renderer.domElement.clientWidth) * 2 - 1;
-        mouse.y = -(event.clientY / renderer.domElement.clientHeight) * 2 + 1;
-    }
-    let startTime: number;
-    let mouseDownEvent: any;
-    function onMouseDown(event: any) {
-        mouseDownEvent = event;
-        startTime = new Date().getTime();
-    }
-    let lerpTarget: { type: string, indeces: Array<number> | undefined, position: THREE.Vector3 | undefined } | undefined;
-    let trackTarget: Array<number> | undefined;
-    let duration: number;
-    function onMouseUp() {
-        duration = new Date().getTime() - startTime;
-    }
+	function updateMouseCoordinates(event: MouseEvent) {
+		mouse.x = (event.clientX / renderer.domElement.clientWidth) * 2 - 1;
+		mouse.y = -(event.clientY / renderer.domElement.clientHeight) * 2 + 1;
+	}
+	let startTime: number;
+	let mouseDownEvent: any;
+	function onMouseDown(event: any) {
+		mouseDownEvent = event;
+		startTime = new Date().getTime();
+	}
+	let lerpTarget:
+		| { type: string; indeces: Array<number> | undefined; position: THREE.Vector3 | undefined }
+		| undefined;
+	let trackTarget: Array<number> | undefined;
+	let duration: number;
+	function onMouseUp() {
+		duration = new Date().getTime() - startTime;
+	}
 
-    function onClick() {
-        if (audioFlag) {
-            playAudio();
-        }
-        const shortClickDuration = 230;
-        if (duration < shortClickDuration) {
-            handleShortClick(mouseDownEvent);
-        }
-    }
+	function onClick() {
+		if (audioFlag) {
+			playAudio();
+		}
+		const shortClickDuration = 230;
+		if (duration < shortClickDuration) {
+			handleShortClick(mouseDownEvent);
+		}
+	}
 
-    const lerpToTarget = (target: THREE.Vector3) => {
-        trackTarget = undefined;
-        controls.target.lerp(target, 0.05);
-    }
-    let previousSatellitePosition: THREE.Vector3 | undefined;
+	const lerpToTarget = (target: THREE.Vector3) => {
+		trackTarget = undefined;
+		controls.target.lerp(target, 0.1);
+	};
 
-    const trackToTarget = (target: THREE.Vector3) => {
-        if (!previousSatellitePosition) {
-            previousSatellitePosition = target.clone();
-            return;
-        }
+	let previousSatellitePosition: THREE.Vector3 | undefined;
 
-        if (previousSatellitePosition) {
-            controls.target.set(target.x, target.y, target.z);
-            const movementVector = new THREE.Vector3().subVectors(target, previousSatellitePosition);
-            // camera.position.add(movementVector);
-            previousSatellitePosition = target.clone();
-            const cameraposition = camera.position.clone();
-            if (movementVector.length() < 2) {
-                camera.position.set(cameraposition.x + movementVector.x, cameraposition.y + movementVector.y, cameraposition.z + movementVector.z);
-            }
-        }
-    };
-    // Constants for Earth's rotation
-    const EARTH_ROTATION_PERIOD = 23.9345 * 60 * 60; // Sidereal day in seconds (23 hours, 56 minutes, 4.1 seconds)
-    const DEGREES_PER_SECOND = 360 / EARTH_ROTATION_PERIOD;
-    const REFERENCE_TIME = new Date().setUTCHours(0, 0, 0, 0); // Set to the most recent midnight UTC
-    const animate = () => {
-        const onAnimationFrame = async () => {
-            stats.update();
-            const currentTime = new Date().getTime();
-            const delta = (currentTime - REFERENCE_TIME) / 1000;
-            const rotationAngle = (delta * DEGREES_PER_SECOND) % 360;
-            earthMesh.rotation.y = THREE.MathUtils.degToRad(rotationAngle - 45);
-            earthGeometry.attributes.position.needsUpdate = true;
-            geometry.attributes.position.needsUpdate = true;
-            hoverColor();
-            if (lerpTarget && !trackTarget) {
-                if (lerpTarget.type === 'satellite' && lerpTarget.indeces) {
-                    const lerpTargetVector = new THREE.Vector3(
-                        satellitepositions[lerpTarget.indeces[0]],
-                        satellitepositions[lerpTarget.indeces[1]],
-                        satellitepositions[lerpTarget.indeces[2]]
-                    );
-                    lerpToTarget(lerpTargetVector);
-                    if (controls.target.distanceTo(lerpTargetVector) < 1) {
-                        trackTarget = lerpTarget.indeces;
-                        lerpTarget = undefined;
-                    }
-                } else if (lerpTarget.type === 'body' && lerpTarget.position) {
-                    lerpToTarget(lerpTarget.position);
-                    if (controls.target.distanceTo(lerpTarget.position) < 1) {
-                        trackTarget = undefined;
-                        lerpTarget = undefined;
-                    }
-                }
-            }
-            else if (trackTarget) {
-                const trackTargetVector = new THREE.Vector3(satellitepositions[trackTarget[0]], satellitepositions[trackTarget[1]], satellitepositions[trackTarget[2]]);
-                trackToTarget(trackTargetVector);
-            }
-            controls.update();
-            renderer.render(scene, camera);
-            animationFrameId = requestAnimationFrame(onAnimationFrame);
-        };
-        animationFrameId = requestAnimationFrame(onAnimationFrame);
-    };
-    resize();
-    // TODO find out why removing the following line breaks hovercolor and click
-    await new Promise(r => setTimeout(r, 400));
-    animate();
+	const trackToTarget = (target: THREE.Vector3) => {
+		if (!previousSatellitePosition) {
+			previousSatellitePosition = target.clone();
+			return;
+		}
 
-    window.addEventListener('mousemove', updateMouseCoordinates);
-    window.addEventListener('mousedown', onMouseDown, false);
-    window.addEventListener('mouseup', onMouseUp, false);
-    window.addEventListener('click', onClick, false);
-    // Return cleanup function
-    return () => {
-        cancelAnimationFrame(animationFrameId); // Cancel the animation loop
-        window.removeEventListener('resize', resize);
-        window.removeEventListener('mousemove', updateMouseCoordinates);
-        window.removeEventListener('mousedown', onMouseDown);
-        window.removeEventListener('mouseup', onMouseUp);
-        window.removeEventListener('click', onClick);
-    };
+		if (previousSatellitePosition) {
+			controls.target.set(target.x, target.y, target.z);
+			const movementVector = new THREE.Vector3().subVectors(target, previousSatellitePosition);
+			// camera.position.add(movementVector);
+			previousSatellitePosition = target.clone();
+			const cameraposition = camera.position.clone();
+			if (movementVector.length() < 2) {
+				camera.position.set(
+					cameraposition.x + movementVector.x,
+					cameraposition.y + movementVector.y,
+					cameraposition.z + movementVector.z
+				);
+			}
+		}
+	};
+	// Constants for Earth's rotation
+	const EARTH_ROTATION_PERIOD = 23.9345 * 60 * 60; // Sidereal day in seconds (23 hours, 56 minutes, 4.1 seconds)
+	const DEGREES_PER_SECOND = 360 / EARTH_ROTATION_PERIOD;
+	const REFERENCE_TIME = new Date().setUTCHours(0, 0, 0, 0); // Set to the most recent midnight UTC
+
+	sharedData.subscribe((data) => {
+		console.log('subscribe called with data', data);
+		if (data[1] === 'show_objects') {
+			for (let i = 0; i < N; i++) {
+				const noradID = satelliteData[i].norad_cat_id;
+				// Check if noradID is present in any of the objects in data[0]
+				if (data[0].some((item: { NORAD_CAT_ID: any }) => item.NORAD_CAT_ID === noradID)) {
+					visibility[i] = 1.0;
+				} else {
+					visibility[i] = 0.0;
+				}
+			}
+			geometry.attributes.visibility.needsUpdate = true;
+			// delete any orbits
+			scene.children.forEach((child) => {
+				if (child.type === 'Line') {
+					scene.remove(child);
+				}
+			});
+		}
+	});
+
+	const animate = () => {
+		const onAnimationFrame = async () => {
+			stats.update();
+			const currentTime = new Date().getTime();
+			const delta = (currentTime - REFERENCE_TIME) / 1000;
+			const rotationAngle = (delta * DEGREES_PER_SECOND) % 360;
+			earthMesh.rotation.y = THREE.MathUtils.degToRad(rotationAngle - 45);
+			earthGeometry.attributes.position.needsUpdate = true;
+			geometry.attributes.position.needsUpdate = true;
+			hoverColor();
+			if (lerpTarget && !trackTarget) {
+				if (lerpTarget.type === 'satellite' && lerpTarget.indeces) {
+					const lerpTargetVector = new THREE.Vector3(
+						satellitepositions[lerpTarget.indeces[0]],
+						satellitepositions[lerpTarget.indeces[1]],
+						satellitepositions[lerpTarget.indeces[2]]
+					);
+					lerpToTarget(lerpTargetVector);
+					if (controls.target.distanceTo(lerpTargetVector) < 1.5) {
+						controls.target = lerpTargetVector;
+						trackTarget = lerpTarget.indeces;
+						lerpTarget = undefined;
+					}
+				} else if (lerpTarget.type === 'body' && lerpTarget.position) {
+					lerpToTarget(lerpTarget.position);
+					if (controls.target.distanceTo(lerpTarget.position) < 1) {
+						trackTarget = undefined;
+						lerpTarget = undefined;
+					}
+				}
+			} else if (trackTarget) {
+				const trackTargetVector = new THREE.Vector3(
+					satellitepositions[trackTarget[0]],
+					satellitepositions[trackTarget[1]],
+					satellitepositions[trackTarget[2]]
+				);
+				trackToTarget(trackTargetVector);
+			}
+			controls.update();
+			renderer.render(scene, camera);
+			animationFrameId = requestAnimationFrame(onAnimationFrame);
+		};
+		animationFrameId = requestAnimationFrame(onAnimationFrame);
+	};
+	resize();
+	// TODO find out why removing the following line breaks hovercolor and click
+	await new Promise((r) => setTimeout(r, 1000));
+	animate();
+
+	window.addEventListener('mousemove', updateMouseCoordinates);
+	window.addEventListener('mousedown', onMouseDown, false);
+	window.addEventListener('mouseup', onMouseUp, false);
+	window.addEventListener('click', onClick, false);
+	// Return cleanup function
+	return () => {
+		cancelAnimationFrame(animationFrameId); // Cancel the animation loop
+		window.removeEventListener('resize', resize);
+		window.removeEventListener('mousemove', updateMouseCoordinates);
+		window.removeEventListener('mousedown', onMouseDown);
+		window.removeEventListener('mouseup', onMouseUp);
+		window.removeEventListener('click', onClick);
+	};
 };
 
 window.addEventListener('resize', resize);

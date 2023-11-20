@@ -1,19 +1,15 @@
-// src/routes/api/+server.ts
+// src/routes/api/query/+server.ts
 import { runQuery } from "$lib/server/database.server";
+import { json } from '@sveltejs/kit';
+import type { RequestHandler } from './$types';
 
-export async function POST(request: Request) {
+export const POST: RequestHandler = async ({ request }) => {
     try {
-        const body = JSON.parse(await request.text());
-        const { query } = body;
-        const data = await runQuery(query);
-        return {
-            status: 200,
-            body: data
-        };
+        const requestBody = await request.json();
+        const data = await runQuery(requestBody.query);
+        return json(JSON.stringify(data));
     } catch (e) {
-        return {
-            status: 500,
-            body: e
-        };
+        console.error('Error parsing request body: ', e);
+        return json(e, { status: 400 });
     }
-}
+};
