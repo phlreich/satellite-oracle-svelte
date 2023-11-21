@@ -24,7 +24,7 @@
 
 	type Message = ChatCompletionMessage | UserMessage | ToolMessage;
 
-	let chatHistory: Message[] = [];
+	const chatHistory = writable<Message[]>([]);
 
 	const sharedData = writable(Array<any>());
 
@@ -87,13 +87,17 @@
 		if (event.key === 'Enter') {
 			console.log($inputValue);
 			let userChatInput = $inputValue;
-			chatHistory.push({ role: 'user', content: userChatInput });
+			chatHistory.update((history) => {
+				return [...history, { role: 'user', content: userChatInput }];
+			});
 			$inputValue = '';
-			let result = await aiChat(chatHistory);
+			let result = await aiChat($chatHistory);
 			result = JSON.parse(result);
 			if (result.choices[0]) {
 				(window as any).result = result;
-				chatHistory.push(result.choices[0].message);
+				chatHistory.update((history) => {
+					return [...history, result.choices[0].message];
+				});
 			}
 			// if it is a function call, run it and send the data to the scene
 			if (result.choices[0].message.tool_calls) {
@@ -108,10 +112,15 @@
 				}
 				data = JSON.parse(data);
 				sharedData.set([data, args.intent]);
-				chatHistory.push({
-					role: 'tool',
-					content: 'SQL query executed',
-					tool_call_id: result.choices[0].message.tool_calls[0].id
+				chatHistory.update((history) => {
+					return [
+						...history,
+						{
+							role: 'tool',
+							content: 'SQL query executed',
+							tool_call_id: result.choices[0].message.tool_calls[0].id
+						}
+					];
 				});
 			} else {
 				// if it is not a function call, just send the message to the scene
@@ -142,8 +151,19 @@
 <!-- Floating input field -->
 <!-- svelte-ignore a11y-click-events-have-key-events -->
 <!-- svelte-ignore a11y-no-static-element-interactions -->
-<div class="input-field" on:click|stopPropagation>
-	<textarea bind:value={$inputValue} placeholder="Type anything..." on:keyup={handleKeyUp}
+<div class="chat-window" on:click|stopPropagation>
+	<div class="message-container">
+		{#each $chatHistory as message}
+			<div class="message {message.role}">
+				{message.content}
+			</div>
+		{/each}
+	</div>
+	<textarea
+		class="input-field"
+		bind:value={$inputValue}
+		placeholder="Type anything..."
+		on:keyup={handleKeyUp}
 	></textarea>
 </div>
 
@@ -158,19 +178,40 @@
 		border-radius: 5px;
 		border: 1px solid white;
 	}
-	.input-field textarea::placeholder {
-		color: #ccc;
+	.chat-window {
+		position: absolute;
+		bottom: 10px;
+		right: 10px;
+		color: white;
+		background: rgba(0, 0, 0, 0.7);
+		padding: 10px;
+		border-radius: 5px;
+		border: 1px solid white;
+		max-height: 70vh;
+		overflow-y: auto;
 	}
 
-	.input-field textarea {
-		color: white;
-		background: transparent;
-		border: none;
-		outline: none;
-		font-size: larger;
-		width: 500px; /* Adjust as needed */
-		height: auto; /* Initial height, will expand */
-		overflow-y: hidden; /* Hide vertical scrollbar */
+	.message-container {
+		margin-bottom: 10px;
+	}
+
+	.message {
+		background: #444;
+		border-radius: 10px;
+		padding: 5px 10px;
+		margin-bottom: 5px;
+		max-width: 80%;
+		word-wrap: break-word;
+	}
+
+	.message.user {
+		background: #555;
+		align-self: flex-end;
+	}
+
+	.input-field {
+		/* existing styles */
+		margin-top: 10px;
 	}
 
 	.satellite-info {
