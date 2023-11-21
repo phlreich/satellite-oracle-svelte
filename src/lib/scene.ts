@@ -4,6 +4,33 @@ import { twoline2satrec, eciToGeodetic, gstime, propagate } from 'satellite.js';
 import Stats from 'three/examples/jsm/libs/stats.module.js';
 import type { Writable } from 'svelte/store';
 
+class ThrottledLogger {
+    private lastMessage: string | null = null;
+    private isReadyToLog: boolean = true;
+
+    public log(message: string): void {
+        if (this.isReadyToLog) {
+            console.log(message);
+            this.isReadyToLog = false;
+            setTimeout(() => this.enableLogging(), 1000);
+        } else {
+            this.lastMessage = message; // Update the last message
+        }
+    }
+
+    private enableLogging(): void {
+        this.isReadyToLog = true;
+        if (this.lastMessage !== null) {
+            console.log(this.lastMessage);
+            this.lastMessage = null;
+            // Reset the timer
+            setTimeout(() => this.enableLogging(), 1000);
+        }
+    }
+}
+
+// const logger = new ThrottledLogger();
+
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(
 	75,
@@ -205,23 +232,19 @@ export const createScene = async (
 	function hoverColor() {
 		raycaster.setFromCamera(mouse, camera);
 		let intersects = raycaster.intersectObjects(scene.children, true);
-		if (intersects.length > 0 && intersects[0].object.type === 'Line') {
-			intersects.shift();
-		}
+		let index = intersects.findIndex(intersect => intersect.object.type === 'Points');
 
-		if (intersects.length > 0) {
-			if (intersects[0].object.type === 'Points') {
-				const index = intersects[0].index as number;
-				const color = geometry.attributes['customColor'] as THREE.BufferAttribute;
-				color.setXYZ(index, 0.0, 1.0, 0.0);
-				color.needsUpdate = true;
-			}
+		if (index !== -1) {
+			const satelliteIndex = intersects[index].index as number;
+			const color = geometry.attributes['customColor'] as THREE.BufferAttribute;
+			color.setXYZ(satelliteIndex, 0.0, 1.0, 0.0);
+			color.needsUpdate = true;
 			if (lastIntersect) {
-				if (lastIntersect !== intersects[0].index) {
+				if (lastIntersect !== satelliteIndex) {
 					resetLast(lastIntersect);
 				}
 			}
-			lastIntersect = intersects[0].index;
+			lastIntersect = satelliteIndex;
 		} else {
 			if (lastIntersect) {
 				resetLast(lastIntersect);
@@ -229,6 +252,7 @@ export const createScene = async (
 			lastIntersect = undefined;
 		}
 	}
+
 	function handleShortClick(event: any) {
 		controls.minDistance = 0;
 

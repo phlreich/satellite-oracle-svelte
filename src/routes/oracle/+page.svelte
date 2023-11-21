@@ -114,13 +114,9 @@
 					tool_call_id: result.choices[0].message.tool_calls[0].id
 				});
 			} else {
+				// if it is not a function call, just send the message to the scene
 				console.log(result.choices[0].message.content);
 			}
-
-			// const query = JSON.parse(JSON.parse(result).choices[0].message.tool_calls[0].function.arguments).query;
-			// console.log('Query:', query);
-			// let data = await runQuery(query);
-			// console.log('Query result:', data);
 		}
 	}
 </script>

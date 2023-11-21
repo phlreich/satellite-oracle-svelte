@@ -211,7 +211,8 @@ export function runQuery(query: string): any {
 		const stmnt = db.prepare(query);
 		return stmnt.all();
 	} catch (err) {
-		console.error(err);
+		
+		console.log("returning error", err);
 		return err;
 	}
 }
