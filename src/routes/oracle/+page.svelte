@@ -25,7 +25,7 @@
 	type Message = ChatCompletionMessage | UserMessage | ToolMessage;
 
 	const chatHistory = writable<Message[]>([]);
-
+	(window as any).chatHistory = chatHistory;
 	const sharedData = writable(Array<any>());
 
 	// Reactive variable to hold selected satellite info
@@ -168,16 +168,27 @@
 </div>
 
 <style>
-	.input-field {
-		position: absolute;
-		bottom: 10px;
-		right: 10px;
-		color: white;
-		background: rgba(0, 0, 0, 0.9);
-		padding: 10px;
-		border-radius: 5px;
-		border: 1px solid white;
+	.chat-window::-webkit-scrollbar {
+		width: 10px; /* Adjust the width of the scrollbar */
 	}
+
+	.chat-window::-webkit-scrollbar-track {
+		background: rgba(255, 255, 255, 0.2); /* The track of the scrollbar */
+	}
+
+	.chat-window::-webkit-scrollbar-thumb {
+		background: #888; /* The draggable scrolling handle */
+		border-radius: 10px; /* Optional: for rounded corners */
+	}
+
+	.chat-window::-webkit-scrollbar-thumb:hover {
+		background: #555; /* Color when the scrollbar is hovered over */
+	}
+
+	textarea {
+		resize: none;
+	}
+
 	.chat-window {
 		position: absolute;
 		bottom: 10px;
@@ -187,31 +198,43 @@
 		padding: 10px;
 		border-radius: 5px;
 		border: 1px solid white;
-		max-height: 70vh;
+		max-height: 50vh;
 		overflow-y: auto;
+		width: 30vw;
+	}
+
+	.input-field {
+		color: white;
+		background: rgba(0, 0, 0, 0.9);
+		padding: 10px;
+		border-radius: 5px;
+		border: none;
+		outline: none;
+		font-size: larger;
+		width: 100%;
+		height: 50px; /* Fixed height for input field */
+		margin-top: 10px;
+		box-sizing: border-box; /* Include padding and border in the width */
 	}
 
 	.message-container {
 		margin-bottom: 10px;
+		overflow-y: auto;
+		max-height: calc(50vh - 60px - 50px); /* Calculate the remaining space for messages */
+		/* The above calculation subtracts the padding of the chat-window,
+           the margin-top of the input-field, and the height of the input-field */
 	}
 
 	.message {
-		background: #444;
+		background: #5b2a2a;
 		border-radius: 10px;
 		padding: 5px 10px;
 		margin-bottom: 5px;
-		max-width: 80%;
 		word-wrap: break-word;
 	}
 
 	.message.user {
-		background: #555;
-		align-self: flex-end;
-	}
-
-	.input-field {
-		/* existing styles */
-		margin-top: 10px;
+		background: #0c2a2a;
 	}
 
 	.satellite-info {
@@ -225,6 +248,7 @@
 		border-radius: 5px;
 		border: 1px solid white;
 	}
+
 	.visible {
 		display: block;
 	}
