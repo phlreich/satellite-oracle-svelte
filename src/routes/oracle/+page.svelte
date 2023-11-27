@@ -7,6 +7,37 @@
 	import { writable } from 'svelte/store';
 	import type { ChatCompletionMessage } from 'openai/resources';
 
+	let chatWindow: HTMLDivElement;
+	let startX: number, startY: number, startWidth: number, startHeight: number;
+
+	const initDrag = (e: MouseEvent) => {
+		startX = e.clientX;
+		startY = e.clientY;
+		startWidth = parseInt(document.defaultView?.getComputedStyle(chatWindow).width ?? '300', 10);
+		startHeight = parseInt(document.defaultView?.getComputedStyle(chatWindow).height ?? '150', 10);
+		document.documentElement.addEventListener('mousemove', doDrag, false);
+		document.documentElement.addEventListener('mouseup', stopDrag, false);
+	};
+	const minWidth = 300; // minimum width in pixels
+	const minHeight = 80; // minimum height in pixelsF
+
+	const doDrag = (e: MouseEvent) => {
+		const dx = e.clientX - startX;
+		const dy = e.clientY - startY;
+
+		const newWidth = startWidth - dx;
+		const newHeight = startHeight - dy;
+
+		chatWindow.style.width = Math.max(newWidth, minWidth) + 'px';
+		chatWindow.style.height = Math.max(newHeight, minHeight) + 'px';
+		// console.log(`dx: ${dx}, dy: ${dy}, newWidth: ${newWidth}, newHeight: ${newHeight}`);
+	};
+
+	const stopDrag = () => {
+		document.documentElement.removeEventListener('mousemove', doDrag, false);
+		document.documentElement.removeEventListener('mouseup', stopDrag, false);
+	};
+
 	export let data: PageData;
 	let el: HTMLCanvasElement;
 	let cleanup: () => void;
@@ -35,9 +66,12 @@
 		createScene(el, data.sceneData, selectedSatellite, sharedData).then((cleanupFunction) => {
 			cleanup = cleanupFunction;
 		});
+
+		chatWindow.addEventListener('mousedown', initDrag, false);
 	});
 
 	onDestroy(() => {
+		chatWindow.removeEventListener('mousedown', initDrag, false);
 		if (cleanup) cleanup();
 	});
 
@@ -151,7 +185,7 @@
 <!-- Floating input field -->
 <!-- svelte-ignore a11y-click-events-have-key-events -->
 <!-- svelte-ignore a11y-no-static-element-interactions -->
-<div class="chat-window" on:click|stopPropagation>
+<div bind:this={chatWindow} class="chat-window" on:click|stopPropagation>
 	<div class="message-container">
 		{#each $chatHistory as message}
 			<div class="message {message.role}">
@@ -168,23 +202,6 @@
 </div>
 
 <style>
-	.chat-window::-webkit-scrollbar {
-		width: 10px; /* Adjust the width of the scrollbar */
-	}
-
-	.chat-window::-webkit-scrollbar-track {
-		background: rgba(255, 255, 255, 0.2); /* The track of the scrollbar */
-	}
-
-	.chat-window::-webkit-scrollbar-thumb {
-		background: #888; /* The draggable scrolling handle */
-		border-radius: 10px; /* Optional: for rounded corners */
-	}
-
-	.chat-window::-webkit-scrollbar-thumb:hover {
-		background: #555; /* Color when the scrollbar is hovered over */
-	}
-
 	textarea {
 		resize: none;
 	}
@@ -196,11 +213,12 @@
 		color: white;
 		background: rgba(0, 0, 0, 0.7);
 		padding: 10px;
-		border-radius: 5px;
+		border-radius: 6px;
 		border: 1px solid white;
 		max-height: 50vh;
 		overflow-y: auto;
-		width: 30vw;
+		width: 300px;
+		height: 80px;
 	}
 
 	.input-field {
@@ -212,8 +230,6 @@
 		outline: none;
 		font-size: larger;
 		width: 100%;
-		height: 50px; /* Fixed height for input field */
-		margin-top: 10px;
 		box-sizing: border-box; /* Include padding and border in the width */
 	}
 
