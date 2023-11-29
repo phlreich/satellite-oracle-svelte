@@ -3,30 +3,6 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { OpenAI } from 'openai';
 
-const tools = [
-	{
-		type: 'function',
-		function: {
-			name: 'query_db',
-			description: 'Queries the satellite database',
-			parameters: {
-				type: 'object',
-				properties: {
-					query: {
-						type: 'string',
-						description: 'The SQL query to be executed'
-					},
-					intent: {
-						type: 'string',
-						enum: ['show_objects', 'draw_orbits'],
-						description: 'Whether to toggle the visibility of the satellites or draw their orbits'
-					}
-				},
-				required: ['query', 'intent']
-			}
-		}
-	}
-];
 
 const createGpTable = `
 CREATE TABLE IF NOT EXISTS gp ( 
@@ -252,7 +228,34 @@ export const POST: RequestHandler = async ({ request }) => {
 				...requestBody.chatHistory
 			],
 			model: 'gpt-3.5-turbo',
-			tools: tools,
+			tools: [
+				{
+					type: 'function',
+					function: {
+						name: 'query_db',
+						description: 'Queries the satellite database',
+						parameters: {
+							type: 'object',
+							properties: {
+								query: {
+									type: 'string',
+									description: 'The SQL query to be executed'
+								},
+								intent: {
+									type: 'string',
+									enum: ['show_objects', 'draw_orbits'],
+									description: 'Whether to toggle the visibility of the satellites or draw their orbits'
+								},
+								retranslation: {
+									type: 'string',
+									description: 'The re-translation of the query to be executed'
+								}
+							},
+							required: ['query', 'intent', 'retranslation']
+						}
+					}
+				}
+			],
 			tool_choice: 'auto'//{"type": "function", "function": {"name": "query_db"}}
 		});
 		return json(JSON.stringify(data));

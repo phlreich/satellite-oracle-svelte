@@ -194,6 +194,8 @@ export async function getSceneData(): Promise<Array<[string, string, string, num
 export function runQuery(query: string): any {
 	// parse to ensure only select statements are allowed
 	// a better solution might be a read-only user, but this is not supported by sqlite
+
+	console.log('query', query);
 	const parser = new Parser();
 	const opt = {
 		database: 'sqlite'
@@ -207,14 +209,19 @@ export function runQuery(query: string): any {
 		throw new Error('Only SELECT statements are allowed, offending query:' + query);
 	}
 
-	try {
-		const stmnt = db.prepare(query);
-		return stmnt.all();
-	} catch (err) {
-		
-		console.log("returning error", err);
-		return err;
-	}
+		try {
+			const stmnt = db.prepare(query);
+			return stmnt.all();
+		} catch (err) {
+			console.log(err);
+			const detailedErrorMessage = {
+				code: (err as any).code,
+				error_message: (err as Error).message,
+			};
+
+			// Return the detailed error message as a JSON string
+			return detailedErrorMessage;
+		}
 }
 
 /* export function queryToIndicesQuery(query: string): string {

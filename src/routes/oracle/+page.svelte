@@ -4,7 +4,7 @@
 	import type { PageData } from './$types';
 	import { onMount, onDestroy } from 'svelte';
 	import { createScene } from '$lib/scene';
-	import { writable } from 'svelte/store';
+	import { writable, get } from 'svelte/store';
 	import type { ChatCompletionMessage } from 'openai/resources';
 
 	let chatWindow: HTMLDivElement;
@@ -18,8 +18,9 @@
 		document.documentElement.addEventListener('mousemove', doDrag, false);
 		document.documentElement.addEventListener('mouseup', stopDrag, false);
 	};
-	const minWidth = 300; // minimum width in pixels
-	const minHeight = 80; // minimum height in pixelsF
+
+	const minWidth = 300;
+	const minHeight = 80;
 
 	const doDrag = (e: MouseEvent) => {
 		const dx = e.clientX - startX;
@@ -30,7 +31,6 @@
 
 		chatWindow.style.width = Math.max(newWidth, minWidth) + 'px';
 		chatWindow.style.height = Math.max(newHeight, minHeight) + 'px';
-		// console.log(`dx: ${dx}, dy: ${dy}, newWidth: ${newWidth}, newHeight: ${newHeight}`);
 	};
 
 	const stopDrag = () => {
@@ -56,12 +56,22 @@
 	type Message = ChatCompletionMessage | UserMessage | ToolMessage;
 
 	const chatHistory = writable<Message[]>([]);
-	(window as any).chatHistory = chatHistory;
+
+	function resetChat() {
+		chatHistory.set([]);
+	}
+
+	function getChatHistory() {
+		return get(chatHistory);
+	}
+
+	// (window as any).getChatHistory = getChatHistory;
 	const sharedData = writable(Array<any>());
 
 	// Reactive variable to hold selected satellite info
 	const selectedSatellite = writable<{ name: string; details: object } | null>(null);
 	const inputValue = writable('');
+
 	onMount(() => {
 		createScene(el, data.sceneData, selectedSatellite, sharedData).then((cleanupFunction) => {
 			cleanup = cleanupFunction;
@@ -92,7 +102,7 @@
 			const data = await response.json();
 			return data;
 		} catch (error) {
-			console.error('Error running query: ', error);
+			// console.error('Error running query: ', error);
 		}
 	}
 
@@ -113,13 +123,13 @@
 			const data = await response.json();
 			return data;
 		} catch (error) {
-			console.error('Error calling aiChat: ', error);
+			// console.error('Error calling aiChat: ', error);
 		}
 	}
 
 	async function handleKeyUp(event: { key: string }) {
 		if (event.key === 'Enter') {
-			console.log($inputValue);
+			// console.log($inputValue);
 			let userChatInput = $inputValue;
 			chatHistory.update((history) => {
 				return [...history, { role: 'user', content: userChatInput }];
@@ -128,7 +138,7 @@
 			let result = await aiChat($chatHistory);
 			result = JSON.parse(result);
 			if (result.choices[0]) {
-				(window as any).result = result;
+				// (window as any).result = result;
 				chatHistory.update((history) => {
 					return [...history, result.choices[0].message];
 				});
@@ -136,29 +146,41 @@
 			// if it is a function call, run it and send the data to the scene
 			if (result.choices[0].message.tool_calls) {
 				const args = JSON.parse(result.choices[0].message.tool_calls[0].function.arguments);
-				console.log('Query:', args.query);
-				let data;
-				try {
-					data = await runQuery(args.query);
-					(window as any).data = data;
-				} catch (error) {
-					console.error('Error running query: ', error);
-				}
+				// console.log('Query:', args.query);
+
+				let data = await runQuery(args.query);
+
 				data = JSON.parse(data);
+				// (window as any).data = data;
+
+				// if there is an error TODO: handle this better
+				if (data.code === 'SQLITE_ERROR') {
+					// console.error('Error running query: ', data.error);
+					chatHistory.update((history) => {
+						return [
+							...history,
+							{
+								role: 'tool',
+								content: 'Query failed, SQL error: ' + data.error_message,
+								tool_call_id: result.choices[0].message.tool_calls[0].id
+							}
+						];
+					});
+					return;
+				}
 				sharedData.set([data, args.intent]);
 				chatHistory.update((history) => {
 					return [
 						...history,
 						{
 							role: 'tool',
-							content: 'SQL query executed',
+							content: 'Query run successfully. ' + args.retranslation,
 							tool_call_id: result.choices[0].message.tool_calls[0].id
 						}
 					];
 				});
 			} else {
-				// if it is not a function call, just send the message to the scene
-				console.log(result.choices[0].message.content);
+				// TODO think about how to handle this
 			}
 		}
 	}
@@ -188,17 +210,22 @@
 <div bind:this={chatWindow} class="chat-window" on:click|stopPropagation>
 	<div class="message-container">
 		{#each $chatHistory as message}
-			<div class="message {message.role}">
-				{message.content}
-			</div>
+			{#if message.content != null}
+				<div class="message {message.role}">
+					{message.content}
+				</div>
+			{/if}
 		{/each}
 	</div>
-	<textarea
-		class="input-field"
-		bind:value={$inputValue}
-		placeholder="Type anything..."
-		on:keyup={handleKeyUp}
-	></textarea>
+	<div class="input-area">
+		<textarea
+			class="input-field"
+			bind:value={$inputValue}
+			placeholder="Type anything..."
+			on:keyup={handleKeyUp}
+		></textarea>
+		<button class="reset-button" on:click={resetChat}>Reset Chat</button>
+	</div>
 </div>
 
 <style>
@@ -207,50 +234,84 @@
 	}
 
 	.chat-window {
+		display: flex;
+		flex-direction: column;
+		justify-content: space-between;
 		position: absolute;
 		bottom: 10px;
 		right: 10px;
 		color: white;
-		background: rgba(0, 0, 0, 0.7);
-		padding: 10px;
-		border-radius: 6px;
+		background: rgba(0, 0, 0, 0.8);
+		padding: 15px;
+		border-radius: 10px;
+		box-shadow: 0 4px 8px rgba(0, 0, 0, 0.5);
+		max-height: 60vh;
+		max-width: calc(100vw - 590px);
+		overflow: hidden;
+		width: 550px;
+		height: 350px;
 		border: 1px solid white;
-		max-height: 50vh;
+		font-size: x-large;
+	}
+
+	.message-container {
 		overflow-y: auto;
-		width: 300px;
-		height: 80px;
+		flex-grow: 1;
+		margin-bottom: 15px;
 	}
 
 	.input-field {
 		color: white;
 		background: rgba(0, 0, 0, 0.9);
 		padding: 10px;
+		margin-right: 10px;
+		padding-right: 10px;
 		border-radius: 5px;
-		border: none;
-		outline: none;
-		font-size: larger;
+		border: 1px solid #ccc;
+		font-size: x-large;
 		width: 100%;
-		box-sizing: border-box; /* Include padding and border in the width */
+		box-sizing: border-box;
 	}
 
-	.message-container {
-		margin-bottom: 10px;
-		overflow-y: auto;
-		max-height: calc(50vh - 60px - 50px); /* Calculate the remaining space for messages */
-		/* The above calculation subtracts the padding of the chat-window,
-           the margin-top of the input-field, and the height of the input-field */
+	.input-field,
+	.reset-button {
+		outline: none;
+		height: 100%;
+	}
+
+	.input-area {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
 	}
 
 	.message {
-		background: #5b2a2a;
+		background: #556272;
 		border-radius: 10px;
-		padding: 5px 10px;
-		margin-bottom: 5px;
+		padding: 10px;
+		margin-bottom: 10px;
 		word-wrap: break-word;
 	}
 
 	.message.user {
-		background: #0c2a2a;
+		background: #2a5562;
+		text-align: right;
+	}
+
+	.reset-button {
+		padding: 5px 15px;
+		border-radius: 5px;
+		border: 1px solid #ccc;
+		color: white;
+		background: rgba(0, 0, 0, 0.9);
+		cursor: pointer;
+		outline: none;
+		font-size: medium;
+	}
+
+	.reset-button:hover {
+		background-color: #232121; /* Change background on hover */
+		border-color: #aaa;
 	}
 
 	.satellite-info {

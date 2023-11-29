@@ -5,28 +5,28 @@ import Stats from 'three/examples/jsm/libs/stats.module.js';
 import type { Writable } from 'svelte/store';
 
 class ThrottledLogger {
-    private lastMessage: string | null = null;
-    private isReadyToLog: boolean = true;
+	private lastMessage: string | null = null;
+	private isReadyToLog: boolean = true;
 
-    public log(message: string): void {
-        if (this.isReadyToLog) {
-            console.log(message);
-            this.isReadyToLog = false;
-            setTimeout(() => this.enableLogging(), 1000);
-        } else {
-            this.lastMessage = message; // Update the last message
-        }
-    }
+	public log(message: string): void {
+		if (this.isReadyToLog) {
+			console.log(message);
+			this.isReadyToLog = false;
+			setTimeout(() => this.enableLogging(), 1000);
+		} else {
+			this.lastMessage = message; // Update the last message
+		}
+	}
 
-    private enableLogging(): void {
-        this.isReadyToLog = true;
-        if (this.lastMessage !== null) {
-            console.log(this.lastMessage);
-            this.lastMessage = null;
-            // Reset the timer
-            setTimeout(() => this.enableLogging(), 1000);
-        }
-    }
+	private enableLogging(): void {
+		this.isReadyToLog = true;
+		if (this.lastMessage !== null) {
+			console.log(this.lastMessage);
+			this.lastMessage = null;
+			// Reset the timer
+			setTimeout(() => this.enableLogging(), 1000);
+		}
+	}
 }
 
 // const logger = new ThrottledLogger();
@@ -129,7 +129,7 @@ export const createScene = async (
 	selectedSatellite: Writable<any>,
 	sharedData: Writable<any>
 ) => {
-	let audioFlag = true;
+	let audioFlag = false;
 	const playAudio = () => {
 		audioFlag = false;
 		const audio = new Audio('/threnody.mp3');
@@ -186,6 +186,8 @@ export const createScene = async (
 
 	const orbitWorker = new Worker(new URL('./orbitWorker.js', import.meta.url), { type: 'module' });
 
+	orbitWorker.postMessage({ type: 'init', satelliteData, satellites });
+
 	satelliteWorker1.postMessage({
 		start: 0,
 		end: (N / 2) | 0,
@@ -210,7 +212,8 @@ export const createScene = async (
 	scene.add(points);
 
 	function drawOrbit(satelliteIndex: number) {
-		orbitWorker.postMessage({ satelliteIndex, satelliteData, satellites });
+		deleteOrbits();
+		orbitWorker.postMessage({ type: 'process', satelliteIndex });
 		orbitWorker.onmessage = (event) => {
 			const orbitPoints = event.data.map(
 				(point: { x: number; y: number; z: number }) => new THREE.Vector3(point.y, point.z, point.x)
@@ -218,13 +221,6 @@ export const createScene = async (
 			const geometry = new THREE.BufferGeometry().setFromPoints(orbitPoints);
 			const material = new THREE.LineBasicMaterial({ color: 0x90ee90 });
 			const orbit = new THREE.Line(geometry, material);
-			// remove old orbit
-			scene.children.forEach((child) => {
-				if (child.type === 'Line') {
-					scene.remove(child);
-				}
-			});
-
 			scene.add(orbit);
 		};
 	}
@@ -365,7 +361,7 @@ export const createScene = async (
 	const REFERENCE_TIME = new Date().setUTCHours(0, 0, 0, 0); // Set to the most recent midnight UTC
 
 	sharedData.subscribe((data) => {
-		console.log('subscribe called with data', data);
+		// console.log('subscribe called with data', data);
 		if (data[1] === 'show_objects') {
 			for (let i = 0; i < N; i++) {
 				const noradID = satelliteData[i].norad_cat_id;
@@ -377,14 +373,29 @@ export const createScene = async (
 				}
 			}
 			geometry.attributes.visibility.needsUpdate = true;
-			// delete any orbits
-			scene.children.forEach((child) => {
-				if (child.type === 'Line') {
-					scene.remove(child);
+			deleteOrbits();
+		} else if (data[1] === 'draw_orbits') {
+			deleteOrbits();
+			for (let i = 0; i < N; i++) {
+				const noradID = satelliteData[i].norad_cat_id;
+				// Check if noradID is present in any of the objects in data[0]
+				if (data[0].some((item: { NORAD_CAT_ID: any }) => item.NORAD_CAT_ID === noradID)) {
+					visibility[i] = 1.0;
+					// console.log('drawing orbit for', noradID);
+					drawOrbit(i);
+
 				}
-			});
+			}
 		}
 	});
+
+	function deleteOrbits() {
+		scene.children.forEach((child) => {
+			if (child.type === 'Line') {
+				scene.remove(child);
+			}
+		});
+	}
 
 	const animate = () => {
 		const onAnimationFrame = async () => {
