@@ -8,7 +8,8 @@ import nfs from 'fs';
 import path from 'path';
 import { EMAIL, PASSWORD } from '$env/static/private';
 import { setCache } from './cache.js';
-import { Parser } from 'node-sql-parser';
+import pkg from "node-sql-parser";
+const { Parser } = pkg;
 
 const DB_PATH = path.join(process.cwd(), 'src/data/satellite.db');
 
