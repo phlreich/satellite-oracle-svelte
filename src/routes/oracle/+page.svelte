@@ -21,7 +21,7 @@
 	};
 
 	const minWidth = 300;
-	const minHeight = 80;
+	const minHeight = 130;
 
 	const doDrag = (e: MouseEvent) => {
 		const dx = e.clientX - startX;
