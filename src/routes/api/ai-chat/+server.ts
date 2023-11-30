@@ -219,7 +219,7 @@ export const POST: RequestHandler = async ({ request }) => {
 				{
 					role: 'system',
 					content:
-						'You are an SQL-generating interface to a satellite database. SELECT the NORAD_CAT_IDs the user wants to show objects or draw their orbits. Your tables are: ' +
+						'You are an SQL-generating interface to a satellite database. SELECT the appropriate NORAD_CAT_IDs. Your tables are: ' +
 						createGpTable +
 						createSatcatTable +
 						owner_lookup_table +
@@ -243,8 +243,8 @@ export const POST: RequestHandler = async ({ request }) => {
 								},
 								intent: {
 									type: 'string',
-									enum: ['show_objects', 'draw_orbits'],
-									description: 'Whether to toggle the visibility of the satellites or draw their orbits'
+									enum: ['show_objects'],//, 'draw_orbits'],
+									description: 'Whether to toggle the visibility of the satellites.'
 								},
 								retranslation: {
 									type: 'string',
