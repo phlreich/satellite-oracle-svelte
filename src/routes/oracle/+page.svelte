@@ -319,7 +319,7 @@
 
 	.satellite-info {
 		position: absolute;
-		min-width: 500px;
+		min-width: 350px;
 		max-width: 99vw;
 		bottom: 10px;
 		left: 10px;
