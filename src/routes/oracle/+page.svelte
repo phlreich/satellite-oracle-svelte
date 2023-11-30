@@ -203,7 +203,7 @@
 	{#if $selectedSatellite}
 		<!-- Display your satellite information here -->
 		<h2>{$selectedSatellite.name}</h2>
-		<pre>{$selectedSatellite.details}</pre>
+		<!-- <pre>{$selectedSatellite.details}</pre> -->
 	{/if}
 </div>
 

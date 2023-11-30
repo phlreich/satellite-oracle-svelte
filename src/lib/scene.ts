@@ -169,7 +169,7 @@ export const createScene = async (
 		sizes[i] = 1000; // size
 	}
 
-	visibility.fill(1.0, 0, 100);
+	visibility.fill(1.0, 0, 3333);
 
 	const satelliteData = satellites.map((sat: any) => {
 		const [epoch, tleLine1, tleLine2, norad_cat_id] = sat;
