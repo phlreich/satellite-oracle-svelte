@@ -10,6 +10,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
+    environment:
+      - OPENAI_API_KEY
 
   nginx:
     image: nginx:latest
