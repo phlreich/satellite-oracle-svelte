@@ -5,6 +5,7 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { createScene } from '$lib/scene';
 	import { writable, get } from 'svelte/store';
+	import { isMobile } from '$lib/utils';
 	import type { ChatCompletionMessage } from 'openai/resources';
 
 	let chatWindow: HTMLDivElement;
@@ -71,8 +72,10 @@
 	// Reactive variable to hold selected satellite info
 	const selectedSatellite = writable<{ name: string; details: object } | null>(null);
 	const inputValue = writable('');
-
+	let isMobileView = false;
 	onMount(() => {
+		const userAgent = typeof window !== 'undefined' ? window.navigator.userAgent : null;
+		isMobileView = isMobile(userAgent);
 		createScene(el, data.sceneData, selectedSatellite, sharedData).then((cleanupFunction) => {
 			cleanup = cleanupFunction;
 		});
@@ -207,7 +210,7 @@
 <!-- Floating input field -->
 <!-- svelte-ignore a11y-click-events-have-key-events -->
 <!-- svelte-ignore a11y-no-static-element-interactions -->
-<div bind:this={chatWindow} class="chat-window" on:click|stopPropagation>
+<div bind:this={chatWindow} class="chat-window {isMobileView ? 'hidden' : ''}" on:click|stopPropagation>
 	<div class="message-container">
 		{#each $chatHistory as message}
 			{#if message.content != null}
@@ -317,6 +320,7 @@
 	.satellite-info {
 		position: absolute;
 		min-width: 500px;
+		max-width: 99vw;
 		bottom: 10px;
 		left: 10px;
 		color: white;
