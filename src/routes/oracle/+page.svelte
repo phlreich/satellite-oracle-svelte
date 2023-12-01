@@ -81,12 +81,26 @@
 		});
 
 		chatWindow.addEventListener('mousedown', initDrag, false);
+
+		typeText('Show all American non-debris objects launched before 2009', 100);
 	});
 
 	onDestroy(() => {
 		chatWindow.removeEventListener('mousedown', initDrag, false);
 		if (cleanup) cleanup();
 	});
+
+	function typeText(text: string, delay = 100) {
+		let i = 0;
+		const interval = setInterval(() => {
+			$inputValue += text[i];
+			i++;
+			if (i >= text.length) {
+				clearInterval(interval);
+				handleKeyUp({ key: 'Enter' });
+			}
+		}, delay);
+	}
 
 	async function runQuery(query: string) {
 		try {
@@ -131,7 +145,10 @@
 	}
 
 	async function handleKeyUp(event: { key: string }) {
-		if (event.key === 'Enter') {
+		if (
+			event.key === 'Enter' &&
+			(get(chatHistory).length === 0 || get(chatHistory).slice(-1)[0].role !== 'user')
+		) {
 			// console.log($inputValue);
 			let userChatInput = $inputValue;
 			chatHistory.update((history) => {
@@ -210,7 +227,11 @@
 <!-- Floating input field -->
 <!-- svelte-ignore a11y-click-events-have-key-events -->
 <!-- svelte-ignore a11y-no-static-element-interactions -->
-<div bind:this={chatWindow} class="chat-window {isMobileView ? 'hidden' : ''}" on:click|stopPropagation>
+<div
+	bind:this={chatWindow}
+	class="chat-window {isMobileView ? 'hidden' : ''}"
+	on:click|stopPropagation
+>
 	<div class="message-container">
 		{#each $chatHistory as message}
 			{#if message.content != null}
