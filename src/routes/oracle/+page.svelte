@@ -2,7 +2,7 @@
 <!-- src/routes/oracle/+page.svelte -->
 <script lang="ts">
 	import type { PageData } from './$types';
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount, onDestroy, afterUpdate } from 'svelte';
 	import { createScene } from '$lib/scene';
 	import { writable, get } from 'svelte/store';
 	import { isMobile } from '$lib/utils';
@@ -38,6 +38,15 @@
 		document.documentElement.removeEventListener('mousemove', doDrag, false);
 		document.documentElement.removeEventListener('mouseup', stopDrag, false);
 	};
+
+	$: if ($chatHistory) {
+        afterUpdate(scrollToBottom);
+    }
+
+	let messageContainer: HTMLElement;
+	function scrollToBottom() {
+		messageContainer.scrollTop = messageContainer.scrollHeight;
+	}
 
 	export let data: PageData;
 	let el: HTMLCanvasElement;
@@ -232,7 +241,7 @@
 	class="chat-window {isMobileView ? 'hidden' : ''}"
 	on:click|stopPropagation
 >
-	<div class="message-container">
+	<div bind:this={messageContainer} class="message-container">
 		{#each $chatHistory as message}
 			{#if message.content != null}
 				<div class="message {message.role}">
