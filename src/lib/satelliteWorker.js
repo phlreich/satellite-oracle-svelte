@@ -18,7 +18,7 @@ onmessage = async (event) => {
 				}
 			}
             // wait a little before updating the positions again
-			await new Promise((r) => setTimeout(r, 10));
+			await new Promise((r) => setTimeout(r, 30));
 		}
 	}
 };
