@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
-import { twoline2satrec, eciToGeodetic, gstime, propagate } from 'satellite.js';
+import { twoline2satrec } from 'satellite.js';
 import Stats from 'three/examples/jsm/libs/stats.module.js';
 import type { Writable } from 'svelte/store';
 
@@ -225,6 +225,26 @@ export const createScene = async (
 		};
 	}
 
+	function drawVerticalLine(satelliteIndex: number) {
+		scene.children.forEach((child) => {
+			if (child.type === 'Line' && child.name === 'verticalLine') {
+				scene.remove(child);
+			}
+		});
+		const material = new THREE.LineBasicMaterial({ color: 0x90ee90 });
+		const points = [];
+		points.push(new THREE.Vector3(0, 0, 0));
+		points.push(new THREE.Vector3(
+			satellitepositions[satelliteIndex * 3],
+			satellitepositions[satelliteIndex * 3 + 1],
+			satellitepositions[satelliteIndex * 3 + 2]
+		));
+		const geometry = new THREE.BufferGeometry().setFromPoints(points);
+		let line = new THREE.Line(geometry, material);
+		line.name = 'verticalLine';
+		scene.add(line);
+	}
+
 	function hoverColor() {
 		raycaster.setFromCamera(mouse, camera);
 		let intersects = raycaster.intersectObjects(scene.children, true);
@@ -248,7 +268,7 @@ export const createScene = async (
 			lastIntersect = undefined;
 		}
 	}
-
+	let localSelectedSatellite: any;
 	function handleShortClick(event: any) {
 		controls.minDistance = 0;
 
@@ -269,8 +289,11 @@ export const createScene = async (
 				color.setXYZ(index, 1.0, 0.0, 0.0);
 				selectedSatellite.set({
 					name: satellites[index].slice(-1)[0],
-					details: satellites[index][1] + '\n' + satellites[index][2]
+					details: satellites[index][1] + '\n' + satellites[index][2],
+					index: index,
+					satrec: satelliteData[index].satrec,
 				});
+				localSelectedSatellite = index;
 				color.needsUpdate = true;
 
 				lerpTarget = {
@@ -355,13 +378,8 @@ export const createScene = async (
 			}
 		}
 	};
-	// Constants for Earth's rotation
-	const EARTH_ROTATION_PERIOD = 23.9345 * 60 * 60; // Sidereal day in seconds (23 hours, 56 minutes, 4.1 seconds)
-	const DEGREES_PER_SECOND = 360 / EARTH_ROTATION_PERIOD;
-	const REFERENCE_TIME = new Date().setUTCHours(0, 0, 0, 0); // Set to the most recent midnight UTC
 
 	sharedData.subscribe((data) => {
-		// console.log('subscribe called with data', data);
 		if (data[1] === 'show_objects') {
 			for (let i = 0; i < N; i++) {
 				const noradID = satelliteData[i].norad_cat_id;
@@ -396,14 +414,21 @@ export const createScene = async (
 			}
 		});
 	}
+	// line to center
+	// const lineGeometry = new THREE.LineGeometry();
 
+	// Constants for Earth's rotation
+	const EARTH_ROTATION_PERIOD = 23.9345 * 60 * 60; // Sidereal day in seconds (23 hours, 56 minutes, 4.1 seconds)
+	const DEGREES_PER_SECOND = 360 / EARTH_ROTATION_PERIOD;
+	const now = new Date();
+	const midnightUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0));
 	const animate = () => {
 		const onAnimationFrame = async () => {
 			stats.update();
 			const currentTime = new Date().getTime();
-			const delta = (currentTime - REFERENCE_TIME) / 1000;
+			const delta = (currentTime - midnightUTC.getTime()) / 1000;
 			const rotationAngle = (delta * DEGREES_PER_SECOND) % 360;
-			earthMesh.rotation.y = THREE.MathUtils.degToRad(rotationAngle - 45);
+			earthMesh.rotation.y = THREE.MathUtils.degToRad(rotationAngle - 19.4);
 			earthGeometry.attributes.position.needsUpdate = true;
 			geometry.attributes.position.needsUpdate = true;
 			hoverColor();
@@ -434,6 +459,9 @@ export const createScene = async (
 					satellitepositions[trackTarget[2]]
 				);
 				trackToTarget(trackTargetVector);
+			}
+			if (localSelectedSatellite) {
+				drawVerticalLine(localSelectedSatellite);
 			}
 			controls.update();
 			renderer.render(scene, camera);

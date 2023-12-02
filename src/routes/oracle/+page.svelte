@@ -7,6 +7,7 @@
 	import { writable, get } from 'svelte/store';
 	import { isMobile } from '$lib/utils';
 	import type { ChatCompletionMessage } from 'openai/resources';
+	import { eciToGeodetic, gstime, propagate, degreesLat, degreesLong } from 'satellite.js';
 
 	let chatWindow: HTMLDivElement;
 	let startX: number, startY: number, startWidth: number, startHeight: number;
@@ -79,7 +80,7 @@
 	const sharedData = writable(Array<any>());
 
 	// Reactive variable to hold selected satellite info
-	const selectedSatellite = writable<{ name: string; details: object } | null>(null);
+	const selectedSatellite = writable<{ name: string; details: object, latitude: number, longitude: number, index: number, satrec: any } | null>(null);
 	const inputValue = writable('');
 	let isMobileView = false;
 	onMount(() => {
@@ -90,8 +91,10 @@
 		});
 
 		chatWindow.addEventListener('mousedown', initDrag, false);
-
-		typeText('Show all American non-debris objects launched before 2009', 100);
+		const setInterval = window.setInterval(() => {
+			updateLatLong();
+		}, 1000);
+		//typeText('Show all American non-debris objects launched before 2009', 100);
 	});
 
 	onDestroy(() => {
@@ -109,6 +112,19 @@
 				handleKeyUp({ key: 'Enter' });
 			}
 		}, delay);
+	}
+
+	function updateLatLong() {
+		if ($selectedSatellite) {
+			const now = new Date();
+			const positionAndVelocity = propagate($selectedSatellite.satrec, now);
+			const positionEci = positionAndVelocity.position;
+			const gmst = gstime(now);
+			if (typeof positionEci === 'boolean') throw 'Error propagating satellite position';
+			const positionGd = eciToGeodetic(positionEci, gmst);
+			$selectedSatellite.latitude = degreesLat(positionGd.latitude);
+			$selectedSatellite.longitude = degreesLong(positionGd.longitude);
+		}
 	}
 
 	async function runQuery(query: string) {
@@ -229,6 +245,10 @@
 	{#if $selectedSatellite}
 		<!-- Display your satellite information here -->
 		<h2>{$selectedSatellite.name}</h2>
+		{#if typeof $selectedSatellite.longitude === 'number' && typeof $selectedSatellite.latitude === 'number'}
+		<pre>Latitude:   {$selectedSatellite.latitude.toFixed(2)}°</pre>
+		<pre>Longitude:  {$selectedSatellite.longitude.toFixed(2)}°</pre>
+		{/if}
 		<!-- <pre>{$selectedSatellite.details}</pre> -->
 	{/if}
 </div>

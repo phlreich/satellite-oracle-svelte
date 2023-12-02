@@ -26,8 +26,8 @@ function calculateOrbitPoints(satelliteIndex) {
     const revolutionsPerDay = parseFloat(satellites[satelliteIndex][2].slice(52, 63));
     const minutesPerDay = 1440;
     const minutesPerRevolution = minutesPerDay / revolutionsPerDay;
-    const timeStep = minutesPerRevolution / 100;
-    for (let i = 0; i < 101; i++) {
+    const timeStep = minutesPerRevolution / 200;
+    for (let i = 0; i < 201; i++) {
         const propagationTime = new Date(tenMinutesAgo + i * timeStep * 60 * 1000);
         const positionAndVelocity = propagate(satelliteData[satelliteIndex].satrec, propagationTime);
         points.push(positionAndVelocity.position);
