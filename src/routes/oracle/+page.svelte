@@ -94,7 +94,7 @@
 		const setInterval = window.setInterval(() => {
 			updateLatLong();
 		}, 1000);
-		//typeText('Show all American non-debris objects launched before 2009', 100);
+		typeText('Show all American non-debris objects launched before 2009', 100);
 	});
 
 	onDestroy(() => {
