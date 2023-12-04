@@ -223,7 +223,7 @@ export const POST: RequestHandler = async ({ request }) => {
 						createGpTable +
 						createSatcatTable +
 						owner_lookup_table +
-						'Remember, we are looking only for NORAD_CAT_IDs. Countries may have multiple aliases, eg for China make a where clauses similar to WHERE COUNTRY IN ("PRC", "CHLE", "CHTU", "CHBZ")'
+						'Remember, we are looking only for NORAD_CAT_IDs. For height queries, use APOGEE before PERIGEE Countries may have multiple aliases, eg for China make a where clauses similar to WHERE COUNTRY IN ("PRC", "CHLE", "CHTU", "CHBZ")'
 				},
 				...requestBody.chatHistory
 			],
