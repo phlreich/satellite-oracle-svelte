@@ -212,6 +212,8 @@
 							}
 						];
 					});
+					await tick();
+					messageContainer.scrollTop = messageContainer.scrollHeight;
 					return;
 				}
 				if (data.code === 'NO_ROWS') {
@@ -226,6 +228,8 @@
 							}
 						];
 					});
+					await tick();
+					messageContainer.scrollTop = messageContainer.scrollHeight;
 					return;
 				}
 				if (data.code === 'SyntaxError') {
@@ -239,6 +243,8 @@
 							}
 						];
 					});
+					await tick();
+					messageContainer.scrollTop = messageContainer.scrollHeight;
 					return;
 				}
 				sharedData.set([data, args.intent]);
