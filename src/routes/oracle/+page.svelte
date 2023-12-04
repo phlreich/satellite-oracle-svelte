@@ -40,10 +40,6 @@
 		document.documentElement.removeEventListener('mouseup', stopDrag, false);
 	};
 
-	$: if ($chatHistory) {
-        afterUpdate(scrollToBottom);
-    }
-
 	let messageContainer: HTMLElement;
 	function scrollToBottom() {
 		messageContainer.scrollTop = messageContainer.scrollHeight;
@@ -76,11 +72,25 @@
 		return get(chatHistory);
 	}
 
+	let prevChatHistory = get(chatHistory);
+
+	$: if ($chatHistory !== prevChatHistory) {
+		afterUpdate(scrollToBottom);
+		prevChatHistory = $chatHistory;
+	}
+
 	(window as any).getChatHistory = getChatHistory;
 	const sharedData = writable(Array<any>());
 
 	// Reactive variable to hold selected satellite info
-	const selectedSatellite = writable<{ name: string; details: object, latitude: number, longitude: number, index: number, satrec: any } | null>(null);
+	const selectedSatellite = writable<{
+		name: string;
+		details: object;
+		latitude: number;
+		longitude: number;
+		index: number;
+		satrec: any;
+	} | null>(null);
 	const inputValue = writable('');
 	let isMobileView = false;
 	onMount(() => {
@@ -272,8 +282,8 @@
 		<!-- Display your satellite information here -->
 		<h2>{$selectedSatellite.name}</h2>
 		{#if typeof $selectedSatellite.longitude === 'number' && typeof $selectedSatellite.latitude === 'number'}
-		<pre>Latitude:   {$selectedSatellite.latitude.toFixed(2)}°</pre>
-		<pre>Longitude:  {$selectedSatellite.longitude.toFixed(2)}°</pre>
+			<pre>Latitude:   {$selectedSatellite.latitude.toFixed(2)}°</pre>
+			<pre>Longitude:  {$selectedSatellite.longitude.toFixed(2)}°</pre>
 		{/if}
 		<!-- <pre>{$selectedSatellite.details}</pre> -->
 	{/if}
