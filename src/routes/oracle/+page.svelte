@@ -2,7 +2,7 @@
 <!-- src/routes/oracle/+page.svelte -->
 <script lang="ts">
 	import type { PageData } from './$types';
-	import { onMount, onDestroy, afterUpdate } from 'svelte';
+	import { onMount, onDestroy, tick } from 'svelte';
 	import { createScene } from '$lib/scene';
 	import { writable, get } from 'svelte/store';
 	import { isMobile } from '$lib/utils';
@@ -41,9 +41,6 @@
 	};
 
 	let messageContainer: HTMLElement;
-	function scrollToBottom() {
-		messageContainer.scrollTop = messageContainer.scrollHeight;
-	}
 
 	export let data: PageData;
 	let el: HTMLCanvasElement;
@@ -70,13 +67,6 @@
 
 	function getChatHistory() {
 		return get(chatHistory);
-	}
-
-	let prevChatHistory = get(chatHistory);
-
-	$: if ($chatHistory !== prevChatHistory) {
-		afterUpdate(scrollToBottom);
-		prevChatHistory = $chatHistory;
 	}
 
 	(window as any).getChatHistory = getChatHistory;
@@ -190,6 +180,8 @@
 				return [...history, { role: 'user', content: userChatInput }];
 			});
 			$inputValue = '';
+			await tick();
+			messageContainer.scrollTop = messageContainer.scrollHeight;
 			let result = await aiChat($chatHistory);
 			result = JSON.parse(result);
 			if (result.choices[0]) {
@@ -263,6 +255,8 @@
 			} else {
 				// TODO think about how to handle this
 			}
+			await tick();
+			messageContainer.scrollTop = messageContainer.scrollHeight;
 		}
 	}
 </script>
