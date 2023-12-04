@@ -219,7 +219,7 @@ export const POST: RequestHandler = async ({ request }) => {
 				{
 					role: 'system',
 					content:
-						'You are an SQL-generating interface to a satellite database. SELECT the appropriate NORAD_CAT_IDs. Your tables are: ' +
+						'You are an SQL-generating interface to a satellite database. SELECT the appropriate NORAD_CAT_IDs. Your tables are: \n' +
 						createGpTable +
 						createSatcatTable +
 						owner_lookup_table +

@@ -76,7 +76,7 @@
 		return get(chatHistory);
 	}
 
-	// (window as any).getChatHistory = getChatHistory;
+	(window as any).getChatHistory = getChatHistory;
 	const sharedData = writable(Array<any>());
 
 	// Reactive variable to hold selected satellite info
@@ -144,7 +144,7 @@
 			const data = await response.json();
 			return data;
 		} catch (error) {
-			// console.error('Error running query: ', error);
+			// console.log('Error calling runQuery: ', error)
 		}
 	}
 
@@ -194,7 +194,6 @@
 				// console.log('Query:', args.query);
 
 				let data = await runQuery(args.query);
-
 				data = JSON.parse(data);
 				// (window as any).data = data;
 
@@ -207,6 +206,33 @@
 							{
 								role: 'tool',
 								content: 'Query failed, SQL error: ' + data.error_message,
+								tool_call_id: result.choices[0].message.tool_calls[0].id
+							}
+						];
+					});
+					return;
+				}
+				if (data.code === 'NO_ROWS') {
+					// console.error('Error running query: ', data.error);
+					chatHistory.update((history) => {
+						return [
+							...history,
+							{
+								role: 'tool',
+								content: 'Query failed, no results found.',
+								tool_call_id: result.choices[0].message.tool_calls[0].id
+							}
+						];
+					});
+					return;
+				}
+				if (data.code === 'SyntaxError') {
+					chatHistory.update((history) => {
+						return [
+							...history,
+							{
+								role: 'tool',
+								content: 'Query failed, syntax error: ' + data.error_message,
 								tool_call_id: result.choices[0].message.tool_calls[0].id
 							}
 						];

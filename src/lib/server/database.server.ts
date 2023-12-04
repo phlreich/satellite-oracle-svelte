@@ -196,33 +196,46 @@ export function runQuery(query: string): any {
 	// parse to ensure only select statements are allowed
 	// a better solution might be a read-only user, but this is not supported by sqlite
 
-	console.log('query', query);
+	console.log('Running Query: ', query);
 	const parser = new Parser();
-	const opt = {
-		database: 'sqlite'
-	};
+	try {
+		const ast = parser.astify(query);//, opt);
+		if (Array.isArray(ast)) {
+			if (ast.length > 1) {
+				throw new Error('Only a single statement is allowed, offending query: ' + query);
+			}
+			else if (ast[0].type && ast[0].type !== 'select') {
+				throw new Error('Only SELECT statements are allowed, offending query:' + query);
 
-	const ast = parser.astify(query, opt);
-
-	if (Array.isArray(ast) && ast[0].type !== 'select') {
-		throw new Error('Only SELECT statements are allowed, offending query:' + query);
-	} else if (!Array.isArray(ast) && ast.type !== 'select') {
-		throw new Error('Only SELECT statements are allowed, offending query:' + query);
-	}
-
-		try {
-			const stmnt = db.prepare(query);
-			return stmnt.all();
-		} catch (err) {
-			console.log(err);
-			const detailedErrorMessage = {
-				code: (err as any).code,
-				error_message: (err as Error).message,
-			};
-
-			// Return the detailed error message as a JSON string
-			return detailedErrorMessage;
+			}
 		}
+		if (ast.type && ast.type !== 'select') {
+			throw new Error('Only SELECT statements are allowed, offending query:' + query);
+		}
+		const stmnt = db.prepare(query);
+		const result = stmnt.all();
+
+		// Check if the result set is empty
+		if (result.length === 0) {
+			let e = new Error('Query executed successfully but returned no rows.');
+			e.code = 'NO_ROWS';
+			throw e;
+		}
+
+		return result;
+	} catch (err) {
+		console.log(err);
+
+		// Determine the error code based on the properties of the error object
+		const errorCode = (err as any).code ? (err as any).code : err.name;
+
+		const detailedErrorMessage = {
+			code: errorCode,
+			error_message: (err as Error).message,
+		};
+
+		return detailedErrorMessage;
+	}
 }
 
 /* export function queryToIndicesQuery(query: string): string {

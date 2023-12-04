@@ -231,6 +231,9 @@ export const createScene = async (
 				scene.remove(child);
 			}
 		});
+		if (!visibility[satelliteIndex]) {
+			return;
+		}
 		const material = new THREE.LineBasicMaterial({ color: 0x90ee90 });
 		const points = [];
 		points.push(new THREE.Vector3(0, 0, 0));
@@ -391,9 +394,8 @@ export const createScene = async (
 				}
 			}
 			geometry.attributes.visibility.needsUpdate = true;
-			deleteOrbits();
+
 		} else if (data[1] === 'draw_orbits') {
-			deleteOrbits();
 			for (let i = 0; i < N; i++) {
 				const noradID = satelliteData[i].norad_cat_id;
 				// Check if noradID is present in any of the objects in data[0]
@@ -401,10 +403,10 @@ export const createScene = async (
 					visibility[i] = 1.0;
 					// console.log('drawing orbit for', noradID);
 					drawOrbit(i);
-
 				}
 			}
 		}
+		deleteOrbits();
 	});
 
 	function deleteOrbits() {
