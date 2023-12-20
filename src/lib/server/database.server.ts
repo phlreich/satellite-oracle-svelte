@@ -128,24 +128,23 @@ export async function initializeDatabaseAndSetCache() {
 			db.exec(createSatcatTable);
 
 			console.log('Tables created.');
-
-			// check if the CSVs are present
-			const csvs = ['gp', 'satcat', 'boxscore'];
-			if (!csvs.every((csv) => nfs.existsSync(`${process.cwd()}/src/data/${csv}.csv`))) {
-				console.log('CSVs not found. Downloading.');
-				await updateCSVs(EMAIL, PASSWORD);
-				return;
-			} else {
-				console.log('CSVs present. Skipping download.');
-			}
-
-			await updateSatcat();
-			await updateBoxscore();
-			await updateGP();
-			await deleteUnusedRows();
-			await checkpoint();
-			setCache(await getSceneData());
 		}
+		// check if the CSVs are present
+		const csvs = ['gp', 'satcat', 'boxscore'];
+		if (!csvs.every((csv) => nfs.existsSync(`${process.cwd()}/src/data/${csv}.csv`))) {
+			console.log('CSVs not found. Downloading.');
+			await updateCSVs(EMAIL, PASSWORD);
+		} else {
+			console.log('CSVs present. Skipping download.');
+		}
+
+		await updateSatcat();
+		await updateBoxscore();
+		await updateGP();
+		await deleteUnusedRows();
+		await checkpoint();
+		setCache(await getSceneData());
+
 	} catch (err) {
 		console.error('Error checking database tables:', err);
 		// TODO implement error handling
@@ -209,6 +208,7 @@ export function runQuery(query: string): any {
 
 			}
 		}
+		// ts-ignore
 		if (ast.type && ast.type !== 'select') {
 			throw new Error('Only SELECT statements are allowed, offending query:' + query);
 		}
@@ -472,6 +472,7 @@ export async function updateCSVs(username: string, password: string) {
 			);
 			await fs.writeFile(`${process.cwd()}/src/data/${dataset}.csv`, data, 'utf8');
 		}
+		console.log('Updated CSVs');
 	} catch (err) {
 		console.error('Error updating CSVs:', err);
 	}

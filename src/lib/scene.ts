@@ -288,25 +288,9 @@ export const createScene = async (
 			trackTarget = undefined;
 			if (intersects[0].object.type === 'Points') {
 				const index = intersects[0].index as number;
-				const color = geometry.attributes['customColor'] as THREE.BufferAttribute;
-				color.setXYZ(index, 1.0, 0.0, 0.0);
-				selectedSatellite.set({
-					name: satellites[index].slice(-1)[0],
-					details: satellites[index][1] + '\n' + satellites[index][2],
-					index: index,
-					satrec: satelliteData[index].satrec,
-				});
-				localSelectedSatellite = index;
-				color.needsUpdate = true;
 
-				lerpTarget = {
-					type: 'satellite',
-					indeces: [index * 3, index * 3 + 1, index * 3 + 2],
-					position: undefined
-				};
-				[index * 3, index * 3 + 1, index * 3 + 2];
-				lastIntersect = index;
-				drawOrbit(index);
+				selectSatellite(index);
+
 			} else if (intersects[0].object.type === 'Mesh') {
 				lerpTarget = { type: 'body', indeces: undefined, position: intersects[0].object.position };
 				selectedSatellite.set({
@@ -315,6 +299,29 @@ export const createScene = async (
 				});
 			}
 		}
+	}
+
+	function selectSatellite(index: number) {
+		const color = geometry.attributes['customColor'] as THREE.BufferAttribute;
+		color.setXYZ(index, 1.0, 0.0, 0.0);
+		selectedSatellite.set({
+			name: satellites[index].slice(-1)[0] + ' NORAD ID: ' + satelliteData[index].norad_cat_id,
+			details: satellites[index][1] + '\n' + satellites[index][2],
+			index: index,
+			satrec: satelliteData[index].satrec,
+		});
+		localSelectedSatellite = index;
+		color.needsUpdate = true;
+
+		lerpTarget = {
+			type: 'satellite',
+			indeces: [index * 3, index * 3 + 1, index * 3 + 2],
+			position: undefined
+		};
+		[index * 3, index * 3 + 1, index * 3 + 2];
+		lastIntersect = index;
+
+		drawOrbit(index);
 	}
 
 	function resetLast(lastIntersect: number) {
