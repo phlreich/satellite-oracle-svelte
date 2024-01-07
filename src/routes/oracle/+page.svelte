@@ -253,7 +253,7 @@
 						...history,
 						{
 							role: 'tool',
-							content: 'Query run successfully. ' + args.retranslation,
+							content: 'Query successful. ' + args.retranslation,
 							tool_call_id: result.choices[0].message.tool_calls[0].id
 						}
 					];
