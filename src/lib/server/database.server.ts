@@ -218,9 +218,7 @@ export function runQuery(query: string): any {
 		} else if (ast.type && ast.type !== 'select') {
 			throw new CustomError('Only SELECT statements are allowed, offending query:' + query);
 		}
-		else {
-			throw new CustomError('SQL cannot be validated, aborting.')
-		}
+		
 		const stmnt = db.prepare(query);
 		const result = stmnt.all();
 
