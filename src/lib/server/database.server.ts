@@ -6,6 +6,7 @@ import type { ParseResult } from 'papaparse';
 import fs from 'fs/promises';
 import nfs from 'fs';
 import path from 'path';
+// @ts-ignore
 import { EMAIL, PASSWORD } from '$env/static/private';
 import { setCache } from './cache.js';
 import pkg from "node-sql-parser";
@@ -208,16 +209,24 @@ export function runQuery(query: string): any {
 
 			}
 		}
-		// ts-ignore
-		if (ast.type && ast.type !== 'select') {
-			throw new Error('Only SELECT statements are allowed, offending query:' + query);
+		class CustomError extends Error {
+			code: string;
+		}
+
+		if (Array.isArray(ast)) {
+			throw new CustomError('Only a single statement is allowed, offending query:' + query);
+		} else if (ast.type && ast.type !== 'select') {
+			throw new CustomError('Only SELECT statements are allowed, offending query:' + query);
+		}
+		else {
+			throw new CustomError('SQL cannot be validated, aborting.')
 		}
 		const stmnt = db.prepare(query);
 		const result = stmnt.all();
 
 		// Check if the result set is empty
 		if (result.length === 0) {
-			let e = new Error('Query executed successfully but returned no rows.');
+			let e = new CustomError('Query executed successfully but returned no rows.');
 			e.code = 'NO_ROWS';
 			throw e;
 		}
