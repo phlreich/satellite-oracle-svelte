@@ -311,43 +311,41 @@ export async function updateSatcat() {
 }
 
 export async function updateGP() {
-	try {
-		console.log('Updating gp database');
-		const text = await fs.readFile(process.cwd() + '/src/data/gp.csv', 'utf8');
+    console.log('Attempting gp database update');
+    try {
+        const text = await fs.readFile(process.cwd() + '/src/data/gp.csv', 'utf8');
+        const parseResult: ParseResult<{ [key: string]: string }> = Papa.parse(text, {
+            header: true,
+            skipEmptyLines: true
+        });
+        const data = parseResult.data;
 
-		const parseResult: ParseResult<{ [key: string]: string }> = Papa.parse(text, {
-			header: true,
-			skipEmptyLines: true
-		});
-		const data = parseResult.data;
+        db.exec('BEGIN'); // Start transaction
+		db.exec('DELETE FROM gp'); // Clear table
 
-		db.exec('BEGIN');
-		db.prepare('DELETE FROM gp').run();
+        if (data.length > 0) {
+            const columns = Object.keys(data[0]);
+            const placeholders = columns.map(col => `@${col}`).join(',');
+            const query = `INSERT OR REPLACE INTO gp (${columns.join(',')}) VALUES (${placeholders})`;
+            const insert = db.prepare(query);
 
-		if (data.length > 0) {
-			const columns = Object.keys(data[0]);
+            for (const row of data) {
+                const params: { [key: string]: string | null } = {};
+                columns.forEach(col => {
+                    params[col] = row[col] === '' ? null : row[col];
+                });
 
-			// Create named placeholders
-			const placeholders = columns.map((col) => '@' + col).join(',');
+                insert.run(params);
+            }
+        }
 
-			const query = `INSERT INTO gp (${columns.join(',')}) VALUES (${placeholders})`;
-			const insert = db.prepare(query);
-
-			for (const row of data) {
-				const params: { [key: string]: string | null } = {};
-				columns.forEach((col) => {
-					params[col] = row[col] === '' ? null : row[col];
-				});
-
-				insert.run(params);
-			}
-		}
-
-		db.exec('COMMIT');
-	} catch (err) {
-		console.error(err);
-	}
+        db.exec('COMMIT'); // Commit transaction
+    } catch (err) {
+        console.error('Error updating gp database:', err);
+        db.exec('ROLLBACK'); // Rollback in case of an error
+    }
 }
+
 
 export async function updateBoxscore() {
 	try {
