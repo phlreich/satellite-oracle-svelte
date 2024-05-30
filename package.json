@@ -13,13 +13,13 @@
 	},
 	"devDependencies": {
 		"@sveltejs/adapter-auto": "^3.1.1",
-		"@sveltejs/adapter-node": "^4.0.1",
+		"@sveltejs/adapter-node": "^5.0.1",
 		"@sveltejs/kit": "^2.5.0",
 		"@sveltejs/vite-plugin-svelte": "^3.0.2",
 		"@types/better-sqlite3": "^7.6.9",
 		"@types/node-schedule": "^2.1.6",
 		"@types/papaparse": "^5.3.10",
-		"@types/three": "^0.161.2",
+		"@types/three": "^0.164.1",
 		"@typescript-eslint/eslint-plugin": "^7.0.2",
 		"@typescript-eslint/parser": "^7.0.2",
 		"eslint": "^8.53.0",
@@ -35,13 +35,13 @@
 	},
 	"type": "module",
 	"dependencies": {
-		"better-sqlite3": "^9.4.1",
+		"better-sqlite3": "^10.1.0",
 		"node-schedule": "^2.1.1",
-		"node-sql-parser": "^4.18.0",
+		"node-sql-parser": "^5.1.0",
 		"openai": "^4.18.0",
 		"papaparse": "^5.4.1",
 		"satellite.js": "^5.0.0",
-		"three": "^0.161.0",
+		"three": "^0.164.1",
 		"ts-node": "^10.9.1"
 	}
 }

@@ -235,7 +235,7 @@ export const createScene = async (
 			return;
 		}
 		const material = new THREE.LineBasicMaterial({ color: 0x90ee90 });
-		const points = [];
+		const points: THREE.Vector3[] = [];
 		points.push(new THREE.Vector3(0, 0, 0));
 		points.push(new THREE.Vector3(
 			satellitepositions[satelliteIndex * 3],
@@ -437,7 +437,7 @@ export const createScene = async (
 			const currentTime = new Date().getTime();
 			const delta = (currentTime - midnightUTC.getTime()) / 1000;
 			const rotationAngle = (delta * DEGREES_PER_SECOND) % 360;
-			earthMesh.rotation.y = THREE.MathUtils.degToRad(rotationAngle - 19.4);
+			earthMesh.rotation.y = THREE.MathUtils.degToRad(rotationAngle + 90);
 			earthGeometry.attributes.position.needsUpdate = true;
 			geometry.attributes.position.needsUpdate = true;
 			hoverColor();
