@@ -17,6 +17,7 @@
 		"@sveltejs/kit": "^2.5.18",
 		"@sveltejs/vite-plugin-svelte": "^3.1.1",
 		"@types/better-sqlite3": "^7.6.11",
+		"@types/node": "^20.14.11",
 		"@types/node-schedule": "^2.1.7",
 		"@types/papaparse": "^5.3.14",
 		"@types/three": "^0.166.0",

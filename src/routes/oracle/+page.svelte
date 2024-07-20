@@ -1,4 +1,3 @@
-<!-- svelte-ignore a11y-no-static-element-interactions -->
 <!-- src/routes/oracle/+page.svelte -->
 <script lang="ts">
 	import type { PageData } from './$types';
@@ -6,7 +5,6 @@
 	import { createScene } from '$lib/scene';
 	import { writable, get } from 'svelte/store';
 	import { isMobile } from '$lib/utils';
-	import type { ChatCompletionMessage } from 'openai/resources';
 	import { eciToGeodetic, gstime, propagate, degreesLat, degreesLong } from 'satellite.js';
 
 	let chatWindow: HTMLDivElement;
@@ -57,7 +55,7 @@
 		tool_call_id: string;
 	}
 
-	type Message = ChatCompletionMessage | UserMessage | ToolMessage;
+	type Message = UserMessage | ToolMessage;
 
 	const chatHistory = writable<Message[]>([]);
 
