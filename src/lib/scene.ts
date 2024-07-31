@@ -33,16 +33,16 @@ class ThrottledLogger {
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(
-	75,
+	40,
 	window.innerWidth / window.innerHeight,
 	0.1,
 	1000000
 );
 
 const scale = 2 * 6356.7523;
-camera.position.z = scale * 0.5;
-camera.position.y = scale * 0.5;
-camera.position.x = scale * 0.5;
+camera.position.z = scale;
+camera.position.y = scale;
+camera.position.x = scale;
 
 let renderer: THREE.WebGLRenderer;
 let animationFrameId: number;
@@ -62,44 +62,36 @@ textureLoader.load('/earth.webp', (texture) => {
 });
 
 const vertexShader = `
-  attribute float size;
-  attribute vec3 customColor;
-  attribute float visibility;
-
-  varying vec3 vColor;
-
-  void main() {
-    if (visibility < 0.5) {
-        gl_Position = vec4(0.0, 0.0, 0.0, 0.0);
-        return;
-    } else {
-        vColor = customColor;
-        vec4 mvPosition = modelViewMatrix * vec4( position, 1.0 );
-        gl_PointSize = size * ( 20.0 / -mvPosition.z );
-        gl_Position = projectionMatrix * mvPosition;
-    }
-  }
-`;
+attribute float size;
+attribute vec3 customColor;
+attribute float visibility;
+varying vec3 vColor;
+void main() {
+if (visibility < 0.5) {
+gl_Position = vec4(0.0, 0.0, 0.0, 0.0);
+return;
+} else {
+vColor = customColor;
+vec4 mvPosition = modelViewMatrix * vec4( position, 1.0 );
+gl_PointSize = size * ( 20.0 / -mvPosition.z );
+gl_Position = projectionMatrix * mvPosition;
+}}`;
 
 const fragmentShader = `
-    uniform vec3 color;
-    uniform float alphaTest;
-    
-    varying vec3 vColor;
-    
-    void main() {
-        float dist = length(gl_PointCoord - vec2(0.5));
-    
-        if (dist > 0.5) {
-            discard;  // discard pixels outside the total point radius
-        } else if (dist > 0.45) {  // if pixels are in the border region
-            gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);  // color them black
-        } else {  // for pixels inside the border
-            gl_FragColor = vec4( color * vColor, 1.0 );
-            if ( gl_FragColor.a < alphaTest ) discard;
-        }
-    }
-`;
+uniform vec3 color;
+uniform float alphaTest;
+varying vec3 vColor;
+void main() {
+float dist = length(gl_PointCoord - vec2(0.5));
+if (dist > 0.5) {
+discard;  // discard pixels outside the total point radius
+} else if (dist > 0.45) {  // if pixels are in the border region
+gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);  // color them black
+} else {  // for pixels inside the border
+gl_FragColor = vec4( color * vColor, 1.0 );
+if ( gl_FragColor.a < alphaTest ) discard;
+}}`;
+
 
 const satelliteMaterial = new THREE.ShaderMaterial({
 	uniforms: {
@@ -111,15 +103,17 @@ const satelliteMaterial = new THREE.ShaderMaterial({
 });
 
 // axes helper
-// const axesHelper = new THREE.AxesHelper(1000000);
-// scene.add(axesHelper);
+const axesHelper = new THREE.AxesHelper(1000000);
+scene.add(axesHelper);
 
 const stats = new Stats();
 document.body.appendChild(stats.dom);
 
 const resize = () => {
 	renderer.setSize(window.innerWidth, window.innerHeight);
-	camera.aspect = window.innerWidth / window.innerHeight;
+	if (camera instanceof THREE.PerspectiveCamera) {
+		camera.aspect = window.innerWidth / window.innerHeight;
+	}
 	camera.updateProjectionMatrix();
 };
 
@@ -147,9 +141,9 @@ export const createScene = async (
 	controls.dampingFactor = 0.1;
 
 	// Optional: Adjust these for how fast the user can zoom/pan
-	controls.zoomSpeed = 0.4;
-	controls.panSpeed = 0.4;
-	controls.rotateSpeed = 0.4;
+	controls.zoomSpeed = 0.8;
+	controls.panSpeed = 0.8;
+	controls.rotateSpeed = 0.8;
 	controls.maxDistance = 1000000;
 	controls.minDistance = 7000;
 
@@ -166,7 +160,7 @@ export const createScene = async (
 		colors[i * 3] = 1.0; // red
 		colors[i * 3 + 1] = 1.0; // green
 		colors[i * 3 + 2] = 1.0; // blue
-		sizes[i] = 1000; // size
+		sizes[i] = 2000; // size
 	}
 
 	visibility.fill(1.0, 0, 3333);
@@ -237,11 +231,13 @@ export const createScene = async (
 		const material = new THREE.LineBasicMaterial({ color: 0x90ee90 });
 		const points: THREE.Vector3[] = [];
 		points.push(new THREE.Vector3(0, 0, 0));
-		points.push(new THREE.Vector3(
-			satellitepositions[satelliteIndex * 3],
-			satellitepositions[satelliteIndex * 3 + 1],
-			satellitepositions[satelliteIndex * 3 + 2]
-		));
+		points.push(
+			new THREE.Vector3(
+				satellitepositions[satelliteIndex * 3],
+				satellitepositions[satelliteIndex * 3 + 1],
+				satellitepositions[satelliteIndex * 3 + 2]
+			)
+		);
 		const geometry = new THREE.BufferGeometry().setFromPoints(points);
 		let line = new THREE.Line(geometry, material);
 		line.name = 'verticalLine';
@@ -251,7 +247,7 @@ export const createScene = async (
 	function hoverColor() {
 		raycaster.setFromCamera(mouse, camera);
 		let intersects = raycaster.intersectObjects(scene.children, true);
-		let index = intersects.findIndex(intersect => intersect.object.type === 'Points');
+		let index = intersects.findIndex((intersect) => intersect.object.type === 'Points');
 
 		if (index !== -1) {
 			const satelliteIndex = intersects[index].index as number;
@@ -290,7 +286,6 @@ export const createScene = async (
 				const index = intersects[0].index as number;
 
 				selectSatellite(index);
-
 			} else if (intersects[0].object.type === 'Mesh') {
 				lerpTarget = { type: 'body', indeces: undefined, position: intersects[0].object.position };
 				selectedSatellite.set({
@@ -308,7 +303,7 @@ export const createScene = async (
 			name: satellites[index].slice(-1)[0] + ' NORAD ID: ' + satelliteData[index].norad_cat_id,
 			details: satellites[index][1] + '\n' + satellites[index][2],
 			index: index,
-			satrec: satelliteData[index].satrec,
+			satrec: satelliteData[index].satrec
 		});
 		localSelectedSatellite = index;
 		color.needsUpdate = true;
@@ -401,7 +396,6 @@ export const createScene = async (
 				}
 			}
 			geometry.attributes.visibility.needsUpdate = true;
-
 		} else if (data[1] === 'draw_orbits') {
 			for (let i = 0; i < N; i++) {
 				const noradID = satelliteData[i].norad_cat_id;
@@ -430,7 +424,9 @@ export const createScene = async (
 	const EARTH_ROTATION_PERIOD = 23.9345 * 60 * 60; // Sidereal day in seconds (23 hours, 56 minutes, 4.1 seconds)
 	const DEGREES_PER_SECOND = 360 / EARTH_ROTATION_PERIOD;
 	const now = new Date();
-	const midnightUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0));
+	const midnightUTC = new Date(
+		Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0)
+	);
 	const animate = () => {
 		const onAnimationFrame = async () => {
 			stats.update();
