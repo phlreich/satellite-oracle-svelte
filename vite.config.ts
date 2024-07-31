@@ -17,5 +17,8 @@ const viteServerConfig = {
 };
 
 export default defineConfig({
-    plugins: [viteServerConfig, sveltekit()]
+    plugins: [viteServerConfig, sveltekit()],
+    server: {
+        hmr: false, // Disable HMR completely
+    }
 });

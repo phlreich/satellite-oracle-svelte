@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { twoline2satrec } from 'satellite.js';
 import Stats from 'three/examples/jsm/libs/stats.module.js';
 import type { Writable } from 'svelte/store';
@@ -137,7 +137,7 @@ export const createScene = async (
 	};
 
 	const raycaster = new THREE.Raycaster();
-	(raycaster.params as any).Points = { threshold: 20 };
+	raycaster.params.Points = { threshold: 20 };
 	const mouse = new THREE.Vector2();
 
 	let lastIntersect: number | undefined;

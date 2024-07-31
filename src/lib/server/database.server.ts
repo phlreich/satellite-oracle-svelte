@@ -210,7 +210,7 @@ export function runQuery(query: string): any {
 			}
 		}
 		class CustomError extends Error {
-			code: string;
+			code: string | undefined;
 		}
 
 		if (Array.isArray(ast)) {
@@ -234,7 +234,7 @@ export function runQuery(query: string): any {
 		console.log(err);
 
 		// Determine the error code based on the properties of the error object
-		const errorCode = (err as any).code ? (err as any).code : err.name;
+		const errorCode = (err as any)?.code ? (err as any).code : (err as any).name;
 
 		const detailedErrorMessage = {
 			code: errorCode,

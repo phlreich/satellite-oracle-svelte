@@ -15,7 +15,7 @@ export const load: PageServerLoad = async () => {
         // console.log(`No cache found, retrieved data from database - data retrieval took ${endTime - startTime} milliseconds`);
         return { sceneData: data };
     }
-    const endTime = performance.now();
+    // const endTime = performance.now();
     // console.log(`Used cache - data retrieval took ${endTime - startTime} milliseconds`);
 
     return { sceneData: cache.sceneData };
