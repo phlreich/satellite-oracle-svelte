@@ -66,44 +66,44 @@ attribute float size;
 attribute vec3 customColor;
 attribute float visibility;
 varying vec3 vColor;
+
 void main() {
-if (visibility < 0.5) {
-gl_Position = vec4(0.0, 0.0, 0.0, 0.0);
-return;
-} else {
-vColor = customColor;
-vec4 mvPosition = modelViewMatrix * vec4( position, 1.0 );
-gl_PointSize = size * ( 20.0 / -mvPosition.z );
-gl_Position = projectionMatrix * mvPosition;
-}}`;
+    if (visibility < 0.5) {
+        gl_Position = vec4(0.0, 0.0, 0.0, 0.0);
+        return;
+    } else {
+        vColor = customColor;
+        vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+        gl_PointSize = size * (20.0 / -mvPosition.z);
+        gl_Position = projectionMatrix * mvPosition;
+    }
+}`;
 
 const fragmentShader = `
 uniform vec3 color;
-uniform float alphaTest;
 varying vec3 vColor;
+
 void main() {
-float dist = length(gl_PointCoord - vec2(0.5));
-if (dist > 0.5) {
-discard;  // discard pixels outside the total point radius
-} else if (dist > 0.45) {  // if pixels are in the border region
-gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);  // color them black
-} else {  // for pixels inside the border
-gl_FragColor = vec4( color * vColor, 1.0 );
-if ( gl_FragColor.a < alphaTest ) discard;
-}}`;
+    vec2 cxy = 2.0 * gl_PointCoord - 1.0;
+    float r = dot(cxy, cxy);
+	gl_FragColor = vec4(color * vColor, 1.0);
+    if (r > 1.0) {
+        discard;  // discard pixels outside the total point radius
+    }
+}
+`;
 
 
 const satelliteMaterial = new THREE.ShaderMaterial({
 	uniforms: {
-		color: { value: new THREE.Color(0xffffff) },
-		alphaTest: { value: 0.9 }
+		color: { value: new THREE.Color(0xffffff) }
 	},
 	vertexShader: vertexShader,
 	fragmentShader: fragmentShader
 });
 
 // axes helper
-const axesHelper = new THREE.AxesHelper(1000000);
+const axesHelper = new THREE.AxesHelper(10000);
 scene.add(axesHelper);
 
 const stats = new Stats();
@@ -150,9 +150,9 @@ export const createScene = async (
 	// initialize satellite positions
 	const N = satellites.length;
 	const sharedBufferPositions = new SharedArrayBuffer(N * 3 * Float32Array.BYTES_PER_ELEMENT);
-	const sharedBuffervisibility = new SharedArrayBuffer(N * 1 * Float32Array.BYTES_PER_ELEMENT);
+	const sharedBuffervisibility = new SharedArrayBuffer(N * 1 * Uint8Array.BYTES_PER_ELEMENT);
 	const satellitepositions = new Float32Array(sharedBufferPositions);
-	const visibility = new Float32Array(sharedBuffervisibility);
+	const visibility = new Uint8Array(sharedBuffervisibility);
 
 	const colors = new Float32Array(N * 3); // three components per color
 	const sizes = new Float32Array(N); // one component per size

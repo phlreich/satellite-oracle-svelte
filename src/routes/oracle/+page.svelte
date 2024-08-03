@@ -9,18 +9,22 @@
 
 	let chatWindow: HTMLDivElement;
 	let startX: number, startY: number, startWidth: number, startHeight: number;
+	let isDragging = false;
+	const minWidth = 300;
+	const minHeight = 130;
 
 	const initDrag = (e: MouseEvent) => {
+		if (messageContainer.contains(e.target as Node)) {
+			return; // Don't initiate drag if clicked inside message container
+		}
+		isDragging = true;
 		startX = e.clientX;
 		startY = e.clientY;
-		startWidth = parseInt(document.defaultView?.getComputedStyle(chatWindow).width ?? '300', 10);
-		startHeight = parseInt(document.defaultView?.getComputedStyle(chatWindow).height ?? '150', 10);
+		startWidth = parseInt(getComputedStyle(chatWindow).width);
+		startHeight = parseInt(getComputedStyle(chatWindow).height);
 		document.documentElement.addEventListener('mousemove', doDrag, false);
 		document.documentElement.addEventListener('mouseup', stopDrag, false);
 	};
-
-	const minWidth = 300;
-	const minHeight = 130;
 
 	const doDrag = (e: MouseEvent) => {
 		const dx = e.clientX - startX;
@@ -34,6 +38,7 @@
 	};
 
 	const stopDrag = () => {
+		isDragging = false;
 		document.documentElement.removeEventListener('mousemove', doDrag, false);
 		document.documentElement.removeEventListener('mouseup', stopDrag, false);
 	};
@@ -87,8 +92,6 @@
 		createScene(el, data.sceneData, selectedSatellite, sharedData).then((cleanupFunction) => {
 			cleanup = cleanupFunction;
 		});
-
-		chatWindow.addEventListener('mousedown', initDrag, false);
 		const setInterval = window.setInterval(() => {
 			updateLatLong();
 		}, 1000);
@@ -96,7 +99,6 @@
 	});
 
 	onDestroy(() => {
-		chatWindow.removeEventListener('mousedown', initDrag, false);
 		if (cleanup) cleanup();
 	});
 
@@ -142,7 +144,7 @@
 			const data = await response.json();
 			return data;
 		} catch (error) {
-			// console.log('Error calling runQuery: ', error)
+			console.log('Error calling runQuery: ', error);
 		}
 	}
 
@@ -292,8 +294,9 @@
 <!-- svelte-ignore a11y-no-static-element-interactions -->
 <div
 	bind:this={chatWindow}
-	class="chat-window {isMobileView ? 'hidden' : ''}"
+	class="chat-window {isMobileView ? 'hidden' : ''} {isDragging ? 'no-select' : ''}"
 	on:click|stopPropagation
+	on:mousedown={initDrag}
 >
 	<div bind:this={messageContainer} class="message-container">
 		{#each $chatHistory as message}
@@ -321,6 +324,7 @@
 	}
 
 	.chat-window {
+		cursor: nwse-resize;
 		display: flex;
 		flex-direction: column;
 		justify-content: space-between;
@@ -342,12 +346,14 @@
 	}
 
 	.message-container {
+		cursor: default;
 		overflow-y: auto;
 		flex-grow: 1;
 		margin-bottom: 15px;
 	}
 
 	.input-field {
+		cursor: default;
 		color: white;
 		background: rgba(0, 0, 0, 0.9);
 		padding: 10px;
@@ -420,5 +426,12 @@
 
 	.hidden {
 		display: none;
+	}
+
+	.no-select {
+		user-select: none;
+		-webkit-user-select: none;
+		-moz-user-select: none;
+		-ms-user-select: none;
 	}
 </style>
