@@ -421,19 +421,17 @@ export const createScene = async (
 	// const lineGeometry = new THREE.LineGeometry();
 
 	// Constants for Earth's rotation
-	const EARTH_ROTATION_PERIOD = 23.9345 * 60 * 60; // Sidereal day in seconds (23 hours, 56 minutes, 4.1 seconds)
-	const DEGREES_PER_SECOND = 360 / EARTH_ROTATION_PERIOD;
-	const now = new Date();
-	const midnightUTC = new Date(
-		Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0)
-	);
+	const oneSiderealDayInMilliseconds = 86164.0916 * 1000; // Sidereal day in milliseconds
+	const referenceTime = new Date().setUTCHours(0, 0, 0, 0); // Midnight UTC as a reference start point
+
 	const animate = () => {
 		const onAnimationFrame = async () => {
 			stats.update();
 			const currentTime = new Date().getTime();
-			const delta = (currentTime - midnightUTC.getTime()) / 1000;
-			const rotationAngle = (delta * DEGREES_PER_SECOND) % 360;
-			earthMesh.rotation.y = THREE.MathUtils.degToRad(rotationAngle + 90);
+			const timeElapsed = currentTime - referenceTime;
+        	// Calculate rotation angle based on the sidereal day
+        	const rotationAngle = (timeElapsed % oneSiderealDayInMilliseconds) / oneSiderealDayInMilliseconds * 360;
+        	earthMesh.rotation.y = THREE.MathUtils.degToRad(rotationAngle + 180);
 			earthGeometry.attributes.position.needsUpdate = true;
 			geometry.attributes.position.needsUpdate = true;
 			hoverColor();
