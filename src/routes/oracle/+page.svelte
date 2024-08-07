@@ -337,6 +337,7 @@
 <div
 	bind:this={chatWindow}
 	class="chat-window {isMobileView ? 'hidden' : ''} {isDragging ? 'no-select' : ''}"
+	on:click|stopPropagation
 >
 	<div bind:this={messageContainer} class="message-container">
 		{#each $chatHistory as message}
