@@ -13,17 +13,25 @@
 	const minWidth = 300;
 	const minHeight = 130;
 
+	const borderSize = 10; // Size of the border region in pixels
+
 	const initDrag = (e: MouseEvent) => {
-		if (messageContainer.contains(e.target as Node)) {
-			return; // Don't initiate drag if clicked inside message container
+		const rect = chatWindow.getBoundingClientRect();
+		const isInBorderRegion =
+			e.clientX - rect.left <= borderSize || // Left border
+			rect.right - e.clientX <= borderSize || // Right border
+			e.clientY - rect.top <= borderSize || // Top border
+			rect.bottom - e.clientY <= borderSize; // Bottom border
+
+		if (isInBorderRegion) {
+			isDragging = true;
+			startX = e.clientX;
+			startY = e.clientY;
+			startWidth = parseInt(getComputedStyle(chatWindow).width);
+			startHeight = parseInt(getComputedStyle(chatWindow).height);
+			document.documentElement.addEventListener('mousemove', doDrag, false);
+			document.documentElement.addEventListener('mouseup', stopDrag, false);
 		}
-		isDragging = true;
-		startX = e.clientX;
-		startY = e.clientY;
-		startWidth = parseInt(getComputedStyle(chatWindow).width);
-		startHeight = parseInt(getComputedStyle(chatWindow).height);
-		document.documentElement.addEventListener('mousemove', doDrag, false);
-		document.documentElement.addEventListener('mouseup', stopDrag, false);
 	};
 
 	const doDrag = (e: MouseEvent) => {
@@ -39,8 +47,28 @@
 
 	const stopDrag = () => {
 		isDragging = false;
+		chatWindow.style.cursor = 'default';
 		document.documentElement.removeEventListener('mousemove', doDrag, false);
 		document.documentElement.removeEventListener('mouseup', stopDrag, false);
+	};
+
+	const updateCursor = (e: MouseEvent) => {
+		const rect = chatWindow.getBoundingClientRect();
+		const isLeft = e.clientX - rect.left <= borderSize;
+		const isRight = rect.right - e.clientX <= borderSize;
+		const isTop = e.clientY - rect.top <= borderSize;
+		const isBottom = rect.bottom - e.clientY <= borderSize;
+
+		if (isLeft || isRight || isTop || isBottom) {
+			if (isTop && isLeft) chatWindow.style.cursor = 'nwse-resize';
+			else if (isTop && isRight) chatWindow.style.cursor = 'nesw-resize';
+			else if (isBottom && isLeft) chatWindow.style.cursor = 'nesw-resize';
+			else if (isBottom && isRight) chatWindow.style.cursor = 'nwse-resize';
+			else if (isLeft || isRight) chatWindow.style.cursor = 'ew-resize';
+			else if (isTop || isBottom) chatWindow.style.cursor = 'ns-resize';
+		} else {
+			chatWindow.style.cursor = 'default';
+		}
 	};
 
 	let messageContainer: HTMLElement;
@@ -95,10 +123,14 @@
 		const setInterval = window.setInterval(() => {
 			updateLatLong();
 		}, 1000);
+		chatWindow.addEventListener('mousemove', updateCursor);
+		chatWindow.addEventListener('mousedown', initDrag);
 		// typeText('Show all American non-debris objects launched before 2009', 100);
 	});
 
 	onDestroy(() => {
+		chatWindow.removeEventListener('mousemove', updateCursor);
+		chatWindow.removeEventListener('mousedown', initDrag);
 		if (cleanup) cleanup();
 	});
 
@@ -295,8 +327,6 @@
 <div
 	bind:this={chatWindow}
 	class="chat-window {isMobileView ? 'hidden' : ''} {isDragging ? 'no-select' : ''}"
-	on:click|stopPropagation
-	on:mousedown={initDrag}
 >
 	<div bind:this={messageContainer} class="message-container">
 		{#each $chatHistory as message}
@@ -324,7 +354,8 @@
 	}
 
 	.chat-window {
-		cursor: nwse-resize;
+		border: 10px solid rgba(255, 255, 255, 0.1);
+		box-sizing: border-box;
 		display: flex;
 		flex-direction: column;
 		justify-content: space-between;
@@ -346,14 +377,12 @@
 	}
 
 	.message-container {
-		cursor: default;
 		overflow-y: auto;
 		flex-grow: 1;
 		margin-bottom: 15px;
 	}
 
 	.input-field {
-		cursor: default;
 		color: white;
 		background: rgba(0, 0, 0, 0.9);
 		padding: 10px;
@@ -397,7 +426,6 @@
 		border: 1px solid #ccc;
 		color: white;
 		background: rgba(0, 0, 0, 0.9);
-		cursor: pointer;
 		outline: none;
 		font-size: medium;
 	}
@@ -433,5 +461,21 @@
 		-webkit-user-select: none;
 		-moz-user-select: none;
 		-ms-user-select: none;
+	}
+
+	.resize-ns {
+		cursor: ns-resize;
+	}
+
+	.resize-ew {
+		cursor: ew-resize;
+	}
+
+	.resize-nwse {
+		cursor: nwse-resize;
+	}
+
+	.resize-nesw {
+		cursor: nesw-resize;
 	}
 </style>
