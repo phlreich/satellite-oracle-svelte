@@ -10,6 +10,8 @@
 	let chatWindow: HTMLDivElement;
 	let startX: number, startY: number, startWidth: number, startHeight: number;
 	let isDragging = false;
+	let verticalDragOnly = false;
+	let horizontalDragOnly = false;
 	const minWidth = 300;
 	const minHeight = 130;
 
@@ -17,13 +19,18 @@
 
 	const initDrag = (e: MouseEvent) => {
 		const rect = chatWindow.getBoundingClientRect();
-		const isInBorderRegion =
-			e.clientX - rect.left <= borderSize || // Left border
-			rect.right - e.clientX <= borderSize || // Right border
-			e.clientY - rect.top <= borderSize || // Top border
-			rect.bottom - e.clientY <= borderSize; // Bottom border
+		const isLeft = e.clientX - rect.left <= borderSize;
+		const isRight = rect.right - e.clientX <= borderSize;
+		const isTop = e.clientY - rect.top <= borderSize;
+		const isBottom = rect.bottom - e.clientY <= borderSize;
 
-		if (isInBorderRegion) {
+		if (isLeft || isRight || isTop || isBottom) {
+			if ((isLeft || isRight) && !(isTop || isBottom)) {
+				horizontalDragOnly = true;
+			}
+			if (!(isLeft || isRight) && (isTop || isBottom)) {
+				verticalDragOnly = true;
+			}
 			isDragging = true;
 			startX = e.clientX;
 			startY = e.clientY;
@@ -35,11 +42,11 @@
 	};
 
 	const doDrag = (e: MouseEvent) => {
-		const dx = e.clientX - startX;
-		const dy = e.clientY - startY;
+		const dx = Number(!verticalDragOnly) * (e.clientX - startX); // Only allow horizontal drag delta if verticalDragOnly is false
+		const dy = Number(!horizontalDragOnly) * (e.clientY - startY); // Only allow vertical drag delta if horizontalDragOnly is false
 
-		const newWidth = startWidth - dx;
-		const newHeight = startHeight - dy;
+		const newWidth =  startWidth - dx;
+		const newHeight =  startHeight - dy;
 
 		chatWindow.style.width = Math.max(newWidth, minWidth) + 'px';
 		chatWindow.style.height = Math.max(newHeight, minHeight) + 'px';
@@ -47,12 +54,15 @@
 
 	const stopDrag = () => {
 		isDragging = false;
+		verticalDragOnly = false;
+		horizontalDragOnly = false;
 		chatWindow.style.cursor = 'default';
 		document.documentElement.removeEventListener('mousemove', doDrag, false);
 		document.documentElement.removeEventListener('mouseup', stopDrag, false);
 	};
 
 	const updateCursor = (e: MouseEvent) => {
+		if (isDragging) return;
 		const rect = chatWindow.getBoundingClientRect();
 		const isLeft = e.clientX - rect.left <= borderSize;
 		const isRight = rect.right - e.clientX <= borderSize;
