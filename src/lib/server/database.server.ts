@@ -15,7 +15,7 @@ const { Parser } = pkg;
 const DB_PATH = path.join(process.cwd(), 'src/data/satellite.db');
 
 const db = new Database(DB_PATH);
-db.pragma('journal_mode = WAL');
+//db.pragma('journal_mode = WAL');
 
 export async function initializeDatabaseAndSetCache() {
 	try {
