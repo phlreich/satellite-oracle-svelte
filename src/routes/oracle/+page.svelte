@@ -125,7 +125,7 @@
 	const inputValue = writable('');
 	let isMobileView = false;
 	onMount(() => {
-		const userAgent = typeof window !== 'undefined' ? window.navigator.userAgent : null;
+		const userAgent = window.navigator.userAgent;
 		isMobileView = isMobile(userAgent);
 		createScene(el, data.sceneData, selectedSatellite, sharedData).then((cleanupFunction) => {
 			cleanup = cleanupFunction;
