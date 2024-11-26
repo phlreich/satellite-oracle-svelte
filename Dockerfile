@@ -1,5 +1,5 @@
 # satellite-oracle-svelte/Dockerfile
-FROM node:22
+FROM node:latest
 WORKDIR /usr/src/app
 COPY package*.json ./
 RUN npm ci
