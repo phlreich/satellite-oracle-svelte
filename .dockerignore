@@ -2,3 +2,4 @@
 src/data/*.db
 src/data/*.db-shm
 src/data/*.db-wal
+node_modules
