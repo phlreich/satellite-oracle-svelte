@@ -2,7 +2,8 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { OpenAI } from 'openai';
-
+// @ts-ignore
+import { OPENAI_API_KEY } from '$env/static/private';
 
 const createGpTable = `
 CREATE TABLE IF NOT EXISTS gp ( 
@@ -213,7 +214,7 @@ export const POST: RequestHandler = async ({ request }) => {
 	try {
 		console.log('Request body: ', request.body);
 		const requestBody = await request.json();
-		const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+		const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 		const data = await openai.chat.completions.create({
 			messages: [
 				{

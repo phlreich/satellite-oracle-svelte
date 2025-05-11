@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { twoline2satrec } from 'satellite.js';
+import { twoline2satrec, gstime } from 'satellite.js';
 import Stats from 'three/examples/jsm/libs/stats.module.js';
 import type { Writable } from 'svelte/store';
 
@@ -424,14 +424,33 @@ export const createScene = async (
 	const oneSiderealDayInMilliseconds = 86164.0916 * 1000; // Sidereal day in milliseconds
 	const referenceTime = new Date().setUTCHours(0, 0, 0, 0); // Midnight UTC as a reference start point
 
+	// Calculate GMST at the reference time (midnight UTC)
+	const refDateObject = new Date(referenceTime);
+	const gmstAtReferenceTimeRad = gstime(refDateObject); // Re-enabled
+
+	// This constant is used to align the texture's Prime Meridian (0° longitude)
+	// with the direction of the vernal equinox in the Three.js scene when GMST is 0.
+	// Based on: Earth's Prime Meridian on texture is +X at rotation.y=0
+	// Vernal Equinox direction in Three.js scene is +Z.
+	// Rotation from +X to +Z around Y is -90 degrees.
+	const textureAlignmentOffsetRad = -Math.PI / 2; // Was previously commented out or a different value
+
 	const animate = () => {
 		const onAnimationFrame = async () => {
 			stats.update();
-			const currentTime = new Date().getTime();
-			const timeElapsed = currentTime - referenceTime;
-        	// Calculate rotation angle based on the sidereal day
-        	const rotationAngle = (timeElapsed % oneSiderealDayInMilliseconds) / oneSiderealDayInMilliseconds * 360;
-        	earthMesh.rotation.y = THREE.MathUtils.degToRad(rotationAngle + 180);
+			const currentTime = new Date().getTime(); // Re-enabled
+			const timeElapsed = currentTime - referenceTime; // Re-enabled
+
+			// Calculate the Earth's dynamic rotation since the referenceTime
+			const dynamicRotationSinceRefTimeDeg = (timeElapsed % oneSiderealDayInMilliseconds) / oneSiderealDayInMilliseconds * 360; // Re-enabled
+			const dynamicRotationSinceRefTimeRad = THREE.MathUtils.degToRad(dynamicRotationSinceRefTimeDeg); // Re-enabled
+
+			// Current GMST = GMST at reference time + dynamic rotation since reference time
+			const currentGmstRad = gmstAtReferenceTimeRad + dynamicRotationSinceRefTimeRad; // Re-enabled
+
+			// Apply GMST and the texture alignment offset
+			earthMesh.rotation.y = currentGmstRad + textureAlignmentOffsetRad; // Corrected logic
+
 			earthGeometry.attributes.position.needsUpdate = true;
 			geometry.attributes.position.needsUpdate = true;
 			hoverColor();
