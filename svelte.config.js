@@ -2,6 +2,14 @@
 import adapter from '@sveltejs/adapter-node';
 import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 
+const dev = process.env.NODE_ENV === 'development';
+const baseFromEnv = process.env.APP_BASE_PATH ?? '/satellite-oracle';
+const sanitizeBase = (value) => {
+	if (!value || value === '/') return '';
+	return `/${value.replace(/^\/+|\/+$/g, '')}`;
+};
+const normalizedBase = sanitizeBase(baseFromEnv);
+
 /** @type {import('@sveltejs/kit').Config} */
 const config = {
 	// Consult https://kit.svelte.dev/docs/integrations#preprocessors
@@ -9,10 +17,10 @@ const config = {
 	preprocess: vitePreprocess(),
 
 	kit: {
-		// adapter-auto only supports some environments, see https://kit.svelte.dev/docs/adapter-auto for a list.
-		// If your environment is not supported or you settled on a specific environment, switch out the adapter.
-		// See https://kit.svelte.dev/docs/adapters for more information about adapters.
-		adapter: adapter()
+		adapter: adapter(),
+		paths: {
+			base: dev ? '' : normalizedBase
+		}
 	}
 };
 

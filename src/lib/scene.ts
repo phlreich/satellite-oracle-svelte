@@ -3,6 +3,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { twoline2satrec, gstime } from 'satellite.js';
 import Stats from 'three/examples/jsm/libs/stats.module.js';
 import type { Writable } from 'svelte/store';
+import { base } from '$app/paths';
 
 class ThrottledLogger {
 	private lastMessage: string | null = null;
@@ -55,7 +56,7 @@ const initialMaterial = new THREE.MeshBasicMaterial({ color: 0x005f9a });
 const earthMesh = new THREE.Mesh(earthGeometry, initialMaterial);
 scene.add(earthMesh);
 const textureLoader = new THREE.TextureLoader();
-textureLoader.load('/earth.webp', (texture) => {
+textureLoader.load(`${base}/earth.webp`, (texture) => {
 	texture.colorSpace = THREE.SRGBColorSpace;
 	earthMesh.material = new THREE.MeshBasicMaterial({ map: texture });
 	earthMesh.material.needsUpdate = true;
@@ -126,7 +127,7 @@ export const createScene = async (
 	let audioFlag = false;
 	const playAudio = () => {
 		audioFlag = false;
-		const audio = new Audio('/threnody.mp3');
+		const audio = new Audio(`${base}/threnody.mp3`);
 		audio.play();
 	};
 

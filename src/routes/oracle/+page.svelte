@@ -6,6 +6,7 @@
 	import { writable, get } from 'svelte/store';
 	import { isMobile } from '$lib/utils';
 	import { eciToGeodetic, gstime, propagate, degreesLat, degreesLong } from 'satellite.js';
+	import { base } from '$app/paths';
 
 	let chatWindow: HTMLDivElement;
 	let startX: number, startY: number, startWidth: number, startHeight: number;
@@ -171,7 +172,7 @@
 
 	async function runQuery(query: string) {
 		try {
-			const response = await fetch('/api/query', {
+			const response = await fetch(`${base}/api/query`, {
 				method: 'POST',
 				headers: {
 					'Content-Type': 'application/json'
@@ -192,7 +193,7 @@
 
 	async function aiChat(chatHistory: Message[]) {
 		try {
-			const response = await fetch('/api/ai-chat', {
+			const response = await fetch(`${base}/api/ai-chat`, {
 				method: 'POST',
 				headers: {
 					'Content-Type': 'application/json'
