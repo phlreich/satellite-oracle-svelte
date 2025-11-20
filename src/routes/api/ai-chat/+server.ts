@@ -1,5 +1,4 @@
 // src/routes/api/ai-chat/+server.ts
-import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { OpenAI } from 'openai';
 // @ts-ignore
@@ -210,7 +209,7 @@ VENZ  | Venezuela
 VTNM  | Vietnam
 `;
 
-export const POST: RequestHandler = async ({ request }) => {
+export const POST: RequestHandler = async ({ request }: { request: Request }) => {
 	try {
 		console.log('Request body: ', request.body);
 		const requestBody = await request.json();
@@ -259,9 +258,18 @@ export const POST: RequestHandler = async ({ request }) => {
 			],
 			tool_choice: 'auto'//{"type": "function", "function": {"name": "query_db"}}
 		});
-		return json(JSON.stringify(data));
+		return new Response(JSON.stringify(data), {
+			headers: {
+				'content-type': 'application/json'
+			}
+		});
 	} catch (e) {
 		console.error('Error parsing request body: ', e);
-		return json({ error: 'Error parsing request body' }, { status: 400 });
+		return new Response(JSON.stringify({ error: 'Error parsing request body' }), {
+			status: 400,
+			headers: {
+				'content-type': 'application/json'
+			}
+		});
 	}
 };
