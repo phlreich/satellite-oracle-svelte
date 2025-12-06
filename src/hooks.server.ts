@@ -12,7 +12,7 @@ const job = scheduleJob('38 1 * * *', async function () {
 export const handle: Handle = async ({ event, resolve }) => {
 	const response = await resolve(event);
 	response.headers.set('Cross-Origin-Opener-Policy', 'same-origin');
-	response.headers.set('Cross-Origin-Embedder-Policy', 'require-corp');
+	response.headers.set('Cross-Origin-Embedder-Policy', 'credentialless');
 	response.headers.set('Cross-Origin-Resource-Policy', 'same-origin');
 	return response;
 };
