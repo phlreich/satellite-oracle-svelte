@@ -125,11 +125,23 @@
 	} | null>(null);
 	const inputValue = writable('');
 	let isMobileView = false;
+	function hideLoadingScreen() {
+		const loadingScreen = document.getElementById('loading-screen');
+		if (loadingScreen) {
+			loadingScreen.classList.add('fade-out');
+			// Remove from DOM after transition completes
+			setTimeout(() => {
+				loadingScreen.remove();
+			}, 600);
+		}
+	}
+
 	onMount(() => {
 		const userAgent = window.navigator.userAgent;
 		isMobileView = isMobile(userAgent);
 		createScene(el, data.sceneData, selectedSatellite, sharedData).then((cleanupFunction) => {
 			cleanup = cleanupFunction;
+			hideLoadingScreen();
 		});
 		const setInterval = window.setInterval(() => {
 			updateLatLong();
