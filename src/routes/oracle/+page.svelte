@@ -205,10 +205,9 @@
 				throw new Error(`HTTP error! Status: ${response.status}`);
 			}
 
-			const data = await response.json();
-			return data;
+		return await response.json();
 		} catch (error) {
-			// console.error('Error calling aiChat: ', error);
+		console.error('Error calling aiChat: ', error);
 		}
 	}
 
@@ -225,8 +224,8 @@
 			$inputValue = '';
 			await tick();
 			messageContainer.scrollTop = messageContainer.scrollHeight;
-			let result = await aiChat($chatHistory);
-			result = JSON.parse(result);
+			const result = await aiChat($chatHistory);
+			if (!result) return;
 			if (result.choices[0]) {
 				// (window as any).result = result;
 				chatHistory.update((history) => {

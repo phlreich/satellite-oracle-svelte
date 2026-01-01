@@ -1,6 +1,7 @@
 // src/routes/api/ai-chat/+server.ts
 import type { RequestHandler } from './$types';
 import { OpenAI } from 'openai';
+import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 // @ts-ignore
 import { OPENAI_API_KEY } from '$env/static/private';
 
@@ -209,11 +210,31 @@ VENZ  | Venezuela
 VTNM  | Vietnam
 `;
 
+type ChatRequestBody = {
+	chatHistory: ChatCompletionMessageParam[];
+};
+
 export const POST: RequestHandler = async ({ request }: { request: Request }) => {
+	let requestBody: ChatRequestBody;
 	try {
-		console.log('Request body: ', request.body);
-		const requestBody = await request.json();
-		const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+		requestBody = (await request.json()) as ChatRequestBody;
+	} catch (e) {
+		console.error('Invalid JSON body:', e);
+		return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
+			status: 400,
+			headers: { 'content-type': 'application/json' }
+		});
+	}
+
+	if (!requestBody || !Array.isArray(requestBody.chatHistory)) {
+		return new Response(JSON.stringify({ error: 'Missing chatHistory array' }), {
+			status: 400,
+			headers: { 'content-type': 'application/json' }
+		});
+	}
+
+	const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+	try {
 		const data = await openai.chat.completions.create({
 			messages: [
 				{
@@ -243,7 +264,7 @@ export const POST: RequestHandler = async ({ request }: { request: Request }) =>
 								},
 								intent: {
 									type: 'string',
-									enum: ['show_objects'],//, 'draw_orbits'],
+									enum: ['show_objects'], //, 'draw_orbits'],
 									description: 'Whether to toggle the visibility of the satellites.'
 								},
 								retranslation: {
@@ -256,7 +277,7 @@ export const POST: RequestHandler = async ({ request }: { request: Request }) =>
 					}
 				}
 			],
-			tool_choice: 'auto'//{"type": "function", "function": {"name": "query_db"}}
+			tool_choice: 'auto' //{"type": "function", "function": {"name": "query_db"}}
 		});
 		return new Response(JSON.stringify(data), {
 			headers: {
@@ -264,9 +285,9 @@ export const POST: RequestHandler = async ({ request }: { request: Request }) =>
 			}
 		});
 	} catch (e) {
-		console.error('Error parsing request body: ', e);
-		return new Response(JSON.stringify({ error: 'Error parsing request body' }), {
-			status: 400,
+		console.error('OpenAI chat error:', e);
+		return new Response(JSON.stringify({ error: 'OpenAI chat error' }), {
+			status: 502,
 			headers: {
 				'content-type': 'application/json'
 			}
