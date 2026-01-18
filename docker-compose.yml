@@ -15,7 +15,7 @@ services:
       - OPENAI_API_KEY
 
   nginx:
-    image: nginx:1.27-alpine
+    image: nginx:stable-alpine
     restart: unless-stopped
     ports:
       - "80:80"
