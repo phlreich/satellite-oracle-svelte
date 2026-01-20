@@ -215,6 +215,14 @@ type ChatRequestBody = {
 };
 
 export const POST: RequestHandler = async ({ request }: { request: Request }) => {
+	const contentLength = request.headers.get('content-length');
+	if (contentLength && Number(contentLength) > 20_000) {
+		return new Response(JSON.stringify({ error: 'Request too large' }), {
+			status: 413,
+			headers: { 'content-type': 'application/json' }
+		});
+	}
+
 	let requestBody: ChatRequestBody;
 	try {
 		requestBody = (await request.json()) as ChatRequestBody;
@@ -228,6 +236,13 @@ export const POST: RequestHandler = async ({ request }: { request: Request }) =>
 
 	if (!requestBody || !Array.isArray(requestBody.chatHistory)) {
 		return new Response(JSON.stringify({ error: 'Missing chatHistory array' }), {
+			status: 400,
+			headers: { 'content-type': 'application/json' }
+		});
+	}
+
+	if (requestBody.chatHistory.length > 30) {
+		return new Response(JSON.stringify({ error: 'chatHistory is too long' }), {
 			status: 400,
 			headers: { 'content-type': 'application/json' }
 		});

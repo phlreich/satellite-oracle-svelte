@@ -13,6 +13,9 @@ import pkg from "node-sql-parser";
 const { Parser } = pkg;
 
 const DB_PATH = path.join(process.cwd(), 'src/data/satellite.db');
+const MAX_QUERY_LENGTH = 2000;
+const MAX_QUERY_ROWS = 5000;
+const ALLOWED_TABLES = new Set(['gp', 'satcat']);
 
 const db = new Database(DB_PATH);
 //db.pragma('journal_mode = WAL');
@@ -199,16 +202,12 @@ export function runQuery(query: string): any {
 	console.log('Running Query: ', query);
 	const parser = new Parser();
 	try {
-		const ast = parser.astify(query);//, opt);
-		if (Array.isArray(ast)) {
-			if (ast.length > 1) {
-				throw new Error('Only a single statement is allowed, offending query: ' + query);
-			}
-			else if (ast[0].type && ast[0].type !== 'select') {
-				throw new Error('Only SELECT statements are allowed, offending query:' + query);
-
-			}
+		const normalizedQuery = query.trim().replace(/;$/, '');
+		if (normalizedQuery.length > MAX_QUERY_LENGTH) {
+			throw new Error(`Query too long (max ${MAX_QUERY_LENGTH} chars)`);
 		}
+
+		const ast = parser.astify(normalizedQuery);//, opt);
 		class CustomError extends Error {
 			code: string | undefined;
 		}
@@ -218,8 +217,46 @@ export function runQuery(query: string): any {
 		} else if (ast.type && ast.type !== 'select') {
 			throw new CustomError('Only SELECT statements are allowed, offending query:' + query);
 		}
+
+		const selectAst = ast as {
+			with?: unknown;
+			set_op?: unknown;
+			union?: unknown;
+			from?: Array<{ table?: unknown; expr?: unknown }>;
+			limit?: { value?: Array<{ value?: unknown }> };
+		};
+		if (selectAst.with || selectAst.set_op || selectAst.union) {
+			throw new CustomError('Only simple SELECT statements are allowed.');
+		}
+
+		if (!Array.isArray(selectAst.from) || selectAst.from.length === 0) {
+			throw new CustomError('Query must select from an allowed table.');
+		}
+
+		for (const fromItem of selectAst.from) {
+			const tableName = typeof fromItem.table === 'string' ? fromItem.table.toLowerCase() : '';
+			if (!tableName || !ALLOWED_TABLES.has(tableName)) {
+				throw new CustomError('Only gp and satcat tables are allowed.');
+			}
+			if (fromItem.expr) {
+				throw new CustomError('Subqueries are not allowed.');
+			}
+		}
+
+		let queryToRun = normalizedQuery;
+		const limitValue = Array.isArray(selectAst.limit?.value)
+			? selectAst.limit.value[0]?.value
+			: undefined;
+		if (limitValue !== undefined) {
+			const limitNumber = Number(limitValue);
+			if (!Number.isFinite(limitNumber) || limitNumber > MAX_QUERY_ROWS) {
+				throw new CustomError(`Query limit too high (max ${MAX_QUERY_ROWS})`);
+			}
+		} else {
+			queryToRun = `${normalizedQuery} LIMIT ${MAX_QUERY_ROWS}`;
+		}
 		
-		const stmnt = db.prepare(query);
+		const stmnt = db.prepare(queryToRun);
 		const result = stmnt.all();
 
 		// Check if the result set is empty
