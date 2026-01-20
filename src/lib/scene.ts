@@ -110,12 +110,29 @@ scene.add(axesHelper);
 const stats = new Stats();
 document.body.appendChild(stats.dom);
 
+const fitEarthInView = () => {
+	if (!(camera instanceof THREE.PerspectiveCamera)) {
+		return;
+	}
+	const aspect = window.innerWidth / window.innerHeight;
+	const verticalFov = THREE.MathUtils.degToRad(camera.fov);
+	const horizontalFov = 2 * Math.atan(Math.tan(verticalFov / 2) * aspect);
+	const limitingFov = Math.min(verticalFov, horizontalFov);
+	const distanceForFit = earthRadius / Math.sin(limitingFov / 2) * 1.08;
+	const currentDistance = camera.position.length();
+	if (distanceForFit > currentDistance) {
+		const direction = camera.position.clone().normalize();
+		camera.position.copy(direction.multiplyScalar(distanceForFit));
+	}
+};
+
 const resize = () => {
 	renderer.setSize(window.innerWidth, window.innerHeight);
 	if (camera instanceof THREE.PerspectiveCamera) {
 		camera.aspect = window.innerWidth / window.innerHeight;
 	}
 	camera.updateProjectionMatrix();
+	fitEarthInView();
 };
 
 export const createScene = async (
