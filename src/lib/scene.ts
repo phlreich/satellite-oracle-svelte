@@ -104,8 +104,8 @@ const satelliteMaterial = new THREE.ShaderMaterial({
 });
 
 // axes helper
-const axesHelper = new THREE.AxesHelper(10000);
-scene.add(axesHelper);
+// const axesHelper = new THREE.AxesHelper(10000);
+// scene.add(axesHelper);
 
 const stats = new Stats();
 document.body.appendChild(stats.dom);
