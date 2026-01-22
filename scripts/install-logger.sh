@@ -1,0 +1,1 @@
+python -c "import subprocess,sys; p=subprocess.run(['crontab','-l'],capture_output=True,text=True); lines=p.stdout.splitlines() if p.returncode==0 else []; lines=[l for l in lines if 'log-docker-stats.sh' not in l]; lines.append('*/1 * * * * /home/james/satellite-oracle-svelte/scripts/log-docker-stats.sh'); sys.stdout.write('\n'.join(lines) + '\n')" | crontab -
