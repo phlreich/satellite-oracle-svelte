@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-LOGGER_SCRIPT="${LOGGER_SCRIPT:-${SCRIPT_DIR}/log-docker-stats.sh}"
+LOGGER_SCRIPT="${LOGGER_SCRIPT:-${SCRIPT_DIR}/log-system-stats.sh}"
 LOG_DIR="${LOG_DIR:-${ROOT_DIR}/logs}"
 UNIT_NAME="${UNIT_NAME:-satellite-oracle-stats}"
 SERVICE_PATH="/etc/systemd/system/${UNIT_NAME}.service"
@@ -67,7 +67,7 @@ import subprocess
 
 result = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
 lines = result.stdout.splitlines() if result.returncode == 0 else []
-lines = [line for line in lines if "log-docker-stats.sh" not in line]
+lines = [line for line in lines if "log-docker-stats.sh" not in line and "log-system-stats.sh" not in line]
 payload = "\n".join(lines) + "\n"
 subprocess.run(["crontab", "-"], input=payload, text=True, check=True)
 PY

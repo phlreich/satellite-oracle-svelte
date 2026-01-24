@@ -4,7 +4,9 @@ This repo ships a small logger that captures container stats plus basic host met
 
 ## What it does
 - Every minute, writes Docker container CPU/IO stats to `logs/docker-stats-YYYY-MM-DD.log`.
-- Appends host `uptime` and `free -h` output when available.
+- Appends host `uptime`, `uname -a`, `df -h`, `docker system df`, `docker compose ps`,
+  `free -h`, top processes by CPU/memory, `ss -s`, and `systemctl is-system-running`
+  output when available.
 
 ## Install (systemd, system-level)
 The installer now sets up a **system-level** systemd timer (more reliable for headless Raspberry Pi deployments).
@@ -35,7 +37,7 @@ sudo systemctl daemon-reload
 ## Configuration
 These env vars can be set when running the installer or the logger:
 
-- `LOGGER_SCRIPT` (default: `scripts/log-docker-stats.sh`)
+- `LOGGER_SCRIPT` (default: `scripts/log-system-stats.sh`)
 - `LOG_DIR` (default: `logs/` inside repo)
 - `UNIT_NAME` (default: `satellite-oracle-stats`)
 
