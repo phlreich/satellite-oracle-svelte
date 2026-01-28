@@ -189,31 +189,42 @@ export const createScene = async (
 		const epochDate = new Date(epoch);
 		return { satrec, epoch: epochDate, norad_cat_id };
 	});
-	const satelliteWorker1 = new Worker(new URL('./satelliteWorker.js', import.meta.url), {
-		type: 'module'
-	});
-	const satelliteWorker2 = new Worker(new URL('./satelliteWorker.js', import.meta.url), {
-		type: 'module'
+	const workerCount = Math.max(2, Math.min(8, navigator.hardwareConcurrency ?? 4));
+	const satelliteWorkers = Array.from({ length: workerCount }, () => {
+		return new Worker(new URL('./satelliteWorker.js', import.meta.url), { type: 'module' });
 	});
 
 	const orbitWorker = new Worker(new URL('./orbitWorker.js', import.meta.url), { type: 'module' });
 
 	orbitWorker.postMessage({ type: 'init', satelliteData, satellites });
 
-	satelliteWorker1.postMessage({
-		start: 0,
-		end: (N / 2) | 0,
-		satellitepositions,
-		satelliteData,
-		visibility
+	const assignVisibleIndices = () => {
+		const visibleIndices: number[] = [];
+		for (let i = 0; i < N; i++) {
+			if (visibility[i] > 0) {
+				visibleIndices.push(i);
+			}
+		}
+		const chunkSize = Math.ceil(visibleIndices.length / workerCount) || 1;
+		for (let workerIndex = 0; workerIndex < workerCount; workerIndex++) {
+			const start = workerIndex * chunkSize;
+			const end = start + chunkSize;
+			satelliteWorkers[workerIndex].postMessage({
+				type: 'set-indices',
+				indices: visibleIndices.slice(start, end)
+			});
+		}
+	};
+
+	satelliteWorkers.forEach((worker) => {
+		worker.postMessage({
+			type: 'init',
+			satellitepositions,
+			satelliteData,
+			visibility
+		});
 	});
-	satelliteWorker2.postMessage({
-		start: (N / 2) | 0,
-		end: N,
-		satellitepositions,
-		satelliteData,
-		visibility
-	});
+	assignVisibleIndices();
 
 	const geometry = new THREE.BufferGeometry();
 	geometry.setAttribute('position', new THREE.BufferAttribute(satellitepositions, 3));
@@ -425,6 +436,7 @@ export const createScene = async (
 				}
 			}
 		}
+		assignVisibleIndices();
 		deleteOrbits();
 	});
 
@@ -521,6 +533,8 @@ export const createScene = async (
 	// Return cleanup function
 	return () => {
 		cancelAnimationFrame(animationFrameId); // Cancel the animation loop
+		satelliteWorkers.forEach((worker) => worker.terminate());
+		orbitWorker.terminate();
 		window.removeEventListener('resize', resize);
 		window.removeEventListener('mousemove', updateMouseCoordinates);
 		window.removeEventListener('mousedown', onMouseDown);
