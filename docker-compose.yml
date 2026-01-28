@@ -12,6 +12,8 @@ services:
       timeout: 5s
       retries: 3
     environment:
+      - EMAIL
+      - PASSWORD
       - OPENAI_API_KEY
 
   nginx:

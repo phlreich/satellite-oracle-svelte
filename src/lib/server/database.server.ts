@@ -7,7 +7,7 @@ import fs from 'fs/promises';
 import nfs from 'fs';
 import path from 'path';
 // @ts-ignore
-import { EMAIL, PASSWORD } from '$env/static/private';
+import { env } from '$env/dynamic/private';
 import { setCache } from './cache.js';
 import pkg from "node-sql-parser";
 const { Parser } = pkg;
@@ -137,7 +137,7 @@ export async function initializeDatabaseAndSetCache() {
 		const csvs = ['gp', 'satcat', 'boxscore'];
 		if (!csvs.every((csv) => nfs.existsSync(`${process.cwd()}/src/data/${csv}.csv`))) {
 			console.log('CSVs not found. Downloading.');
-			await updateCSVs(EMAIL, PASSWORD);
+			await updateCSVs(env.EMAIL, env.PASSWORD);
 		} else {
 			console.log('CSVs present. Skipping download.');
 		}
@@ -502,8 +502,12 @@ async function fetchSpaceTrackData(cookie: string, url: string): Promise<string>
 	return response.text();
 }
 
-export async function updateCSVs(username: string, password: string) {
+export async function updateCSVs(username?: string, password?: string) {
 	try {
+		if (!username || !password) {
+			console.error('Missing EMAIL/PASSWORD; skipping CSV refresh.');
+			return;
+		}
 		const cookie = await getSpaceTrackCookie(username, password);
 
 		const datasets = ['satcat', 'gp', 'boxscore'];
@@ -533,7 +537,7 @@ export async function checkpoint() {
 export async function refreshData() {
 	let startTime = new Date().getTime();
 	console.log('running database refresh node cron job at time: ', startTime);
-	await updateCSVs(EMAIL, PASSWORD);
+	await updateCSVs(env.EMAIL, env.PASSWORD);
 	await updateSatcat();
 	await updateBoxscore();
 	await updateGP();
