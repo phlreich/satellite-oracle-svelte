@@ -50,6 +50,7 @@ let animationFrameId: number;
 
 const resolution = 100;
 const earthRadius = 6356.7523;
+const lineSurfaceOffset = 2; // avoid z-fighting where line meets the surface
 
 const earthGeometry = new THREE.SphereGeometry(earthRadius, resolution, resolution);
 const initialMaterial = new THREE.MeshBasicMaterial({ color: 0x005f9a });
@@ -232,6 +233,7 @@ export const createScene = async (
 	geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
 	geometry.setAttribute('visibility', new THREE.BufferAttribute(visibility, 1));
 	const points = new THREE.Points(geometry, satelliteMaterial);
+	points.renderOrder = 2;
 	scene.add(points);
 
 	function drawOrbit(satelliteIndex: number) {
@@ -243,7 +245,9 @@ export const createScene = async (
 			);
 			const geometry = new THREE.BufferGeometry().setFromPoints(orbitPoints);
 			const material = new THREE.LineBasicMaterial({ color: 0x90ee90 });
+			material.depthWrite = false;
 			const orbit = new THREE.Line(geometry, material);
+			orbit.renderOrder = 1;
 			scene.add(orbit);
 		};
 	}
@@ -258,17 +262,22 @@ export const createScene = async (
 			return;
 		}
 		const material = new THREE.LineBasicMaterial({ color: 0x90ee90 });
+		material.depthWrite = false;
 		const points: THREE.Vector3[] = [];
-		points.push(new THREE.Vector3(0, 0, 0));
-		points.push(
-			new THREE.Vector3(
-				satellitepositions[satelliteIndex * 3],
-				satellitepositions[satelliteIndex * 3 + 1],
-				satellitepositions[satelliteIndex * 3 + 2]
-			)
+		const satelliteVector = new THREE.Vector3(
+			satellitepositions[satelliteIndex * 3],
+			satellitepositions[satelliteIndex * 3 + 1],
+			satellitepositions[satelliteIndex * 3 + 2]
 		);
+		const surfacePoint = satelliteVector
+			.clone()
+			.normalize()
+			.multiplyScalar(earthRadius + lineSurfaceOffset);
+		points.push(surfacePoint);
+		points.push(satelliteVector);
 		const geometry = new THREE.BufferGeometry().setFromPoints(points);
 		let line = new THREE.Line(geometry, material);
+		line.renderOrder = 1;
 		line.name = 'verticalLine';
 		scene.add(line);
 	}
