@@ -6,6 +6,14 @@ services:
     restart: unless-stopped
     volumes:
       - ./src/data:/usr/src/app/src/data
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/satellite-oracle/health"]
       interval: 10s
