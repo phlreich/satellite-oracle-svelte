@@ -312,18 +312,13 @@ export const createScene = async (
 
 		if (
 			nextHoveredSatelliteIndex !== undefined &&
-			nextHoveredSatelliteIndex !== localSelectedSatellite &&
 			nextHoveredSatelliteIndex !== hoveredSatelliteIndex
 		) {
 			color.setXYZ(nextHoveredSatelliteIndex, 0.0, 1.0, 0.0);
 			didChangeColor = true;
 		}
 
-		if (nextHoveredSatelliteIndex === localSelectedSatellite) {
-			hoveredSatelliteIndex = undefined;
-		} else {
-			hoveredSatelliteIndex = nextHoveredSatelliteIndex;
-		}
+		hoveredSatelliteIndex = nextHoveredSatelliteIndex;
 
 		if (didChangeColor) {
 			color.needsUpdate = true;
@@ -363,11 +358,7 @@ export const createScene = async (
 
 	function resetPointColor(pointIndex: number) {
 		const color = geometry.attributes['customColor'] as THREE.BufferAttribute;
-		if (localSelectedSatellite === pointIndex) {
-			color.setXYZ(pointIndex, 1.0, 0.0, 0.0);
-		} else {
-			color.setXYZ(pointIndex, 1.0, 1.0, 1.0);
-		}
+		color.setXYZ(pointIndex, 1.0, 1.0, 1.0);
 	}
 	function handleShortClick(event: MouseEvent) {
 		controls.minDistance = 0;
@@ -401,8 +392,6 @@ export const createScene = async (
 
 	function selectSatellite(index: number) {
 		clearSelectedSatelliteHighlight();
-		const color = geometry.attributes['customColor'] as THREE.BufferAttribute;
-		color.setXYZ(index, 1.0, 0.0, 0.0);
 		selectedSatellite.set({
 			name: satellites[index].slice(-1)[0] + ' NORAD ID: ' + satelliteData[index].norad_cat_id,
 			details: satellites[index][1] + '\n' + satellites[index][2],
@@ -410,7 +399,6 @@ export const createScene = async (
 			satrec: satelliteData[index].satrec
 		});
 		localSelectedSatellite = index;
-		color.needsUpdate = true;
 
 		lerpTarget = {
 			type: 'satellite',
