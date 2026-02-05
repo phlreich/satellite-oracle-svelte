@@ -139,7 +139,7 @@ export const createScene = async (
 	raycaster.params.Points = { threshold: 20 };
 	const mouse = new THREE.Vector2();
 
-	let lastIntersect: number | undefined;
+	let hoveredSatelliteIndex: number | undefined;
 	renderer = new THREE.WebGLRenderer({ antialias: true, canvas: el });
 	const controls = new OrbitControls(camera, renderer.domElement);
 	controls.enableDamping = true;
@@ -293,31 +293,88 @@ export const createScene = async (
 		raycaster.setFromCamera(mouse, camera);
 		const intersects = raycaster.intersectObjects(scene.children, true);
 		const index = intersects.findIndex((intersect) => intersect.object.type === 'Points');
+		const color = geometry.attributes['customColor'] as THREE.BufferAttribute;
+		let nextHoveredSatelliteIndex: number | undefined;
+		let didChangeColor = false;
 
 		if (index !== -1) {
-			const satelliteIndex = intersects[index].index as number;
-			const color = geometry.attributes['customColor'] as THREE.BufferAttribute;
-			color.setXYZ(satelliteIndex, 0.0, 1.0, 0.0);
-			color.needsUpdate = true;
-			if (lastIntersect !== undefined) {
-				if (lastIntersect !== satelliteIndex) {
-					resetLast(lastIntersect);
-				}
-			}
-			lastIntersect = satelliteIndex;
+			nextHoveredSatelliteIndex = intersects[index].index as number;
+		}
+
+		if (
+			hoveredSatelliteIndex !== undefined &&
+			(nextHoveredSatelliteIndex === undefined ||
+				hoveredSatelliteIndex !== nextHoveredSatelliteIndex)
+		) {
+			resetPointColor(hoveredSatelliteIndex);
+			didChangeColor = true;
+		}
+
+		if (
+			nextHoveredSatelliteIndex !== undefined &&
+			nextHoveredSatelliteIndex !== localSelectedSatellite &&
+			nextHoveredSatelliteIndex !== hoveredSatelliteIndex
+		) {
+			color.setXYZ(nextHoveredSatelliteIndex, 0.0, 1.0, 0.0);
+			didChangeColor = true;
+		}
+
+		if (nextHoveredSatelliteIndex === localSelectedSatellite) {
+			hoveredSatelliteIndex = undefined;
 		} else {
-			if (lastIntersect !== undefined) {
-				resetLast(lastIntersect);
-			}
-			lastIntersect = undefined;
+			hoveredSatelliteIndex = nextHoveredSatelliteIndex;
+		}
+
+		if (didChangeColor) {
+			color.needsUpdate = true;
 		}
 	}
 	let localSelectedSatellite: number | undefined;
+	function clearSelectedSatelliteHighlight() {
+		if (localSelectedSatellite === undefined) {
+			return;
+		}
+		const color = geometry.attributes['customColor'] as THREE.BufferAttribute;
+		color.setXYZ(localSelectedSatellite, 1.0, 1.0, 1.0);
+		color.needsUpdate = true;
+		localSelectedSatellite = undefined;
+	}
+
+	function clearHoveredSatelliteHighlight() {
+		if (hoveredSatelliteIndex === undefined) {
+			return;
+		}
+		resetPointColor(hoveredSatelliteIndex);
+		hoveredSatelliteIndex = undefined;
+		const color = geometry.attributes['customColor'] as THREE.BufferAttribute;
+		color.needsUpdate = true;
+	}
+
+	let mouseInsideScene = false;
+	let hasMouseCoordinates = false;
+	function onCanvasMouseEnter() {
+		mouseInsideScene = true;
+	}
+
+	function onCanvasMouseLeave() {
+		mouseInsideScene = false;
+		clearHoveredSatelliteHighlight();
+	}
+
+	function resetPointColor(pointIndex: number) {
+		const color = geometry.attributes['customColor'] as THREE.BufferAttribute;
+		if (localSelectedSatellite === pointIndex) {
+			color.setXYZ(pointIndex, 1.0, 0.0, 0.0);
+		} else {
+			color.setXYZ(pointIndex, 1.0, 1.0, 1.0);
+		}
+	}
 	function handleShortClick(event: MouseEvent) {
 		controls.minDistance = 0;
 
 		mouse.x = (event.clientX / renderer.domElement.clientWidth) * 2 - 1;
 		mouse.y = -(event.clientY / renderer.domElement.clientHeight) * 2 + 1;
+		hasMouseCoordinates = true;
 
 		raycaster.setFromCamera(mouse, camera);
 		const intersects = raycaster.intersectObjects(scene.children, true);
@@ -332,6 +389,7 @@ export const createScene = async (
 
 				selectSatellite(index);
 			} else if (intersects[0].object.type === 'Mesh') {
+				clearSelectedSatelliteHighlight();
 				lerpTarget = { type: 'body', indeces: undefined, position: intersects[0].object.position };
 				selectedSatellite.set({
 					name: 'Earth',
@@ -342,6 +400,7 @@ export const createScene = async (
 	}
 
 	function selectSatellite(index: number) {
+		clearSelectedSatelliteHighlight();
 		const color = geometry.attributes['customColor'] as THREE.BufferAttribute;
 		color.setXYZ(index, 1.0, 0.0, 0.0);
 		selectedSatellite.set({
@@ -358,22 +417,14 @@ export const createScene = async (
 			indeces: [index * 3, index * 3 + 1, index * 3 + 2],
 			position: undefined
 		};
-		lastIntersect = index;
 
 		drawOrbit(index);
-	}
-
-	function resetLast(lastIntersect: number) {
-		// if the camera is not looking at the point, reset the color
-		const color = geometry.attributes['customColor'] as THREE.BufferAttribute;
-		color.setXYZ(lastIntersect, 1.0, 1.0, 1.0);
-		color.needsUpdate = true;
 	}
 
 	function updateMouseCoordinates(event: MouseEvent) {
 		mouse.x = (event.clientX / renderer.domElement.clientWidth) * 2 - 1;
 		mouse.y = -(event.clientY / renderer.domElement.clientHeight) * 2 + 1;
-		hoverDirty = true;
+		hasMouseCoordinates = true;
 	}
 	let startTime: number;
 	let mouseDownEvent: MouseEvent | undefined;
@@ -482,9 +533,8 @@ export const createScene = async (
 	// Vernal Equinox direction in Three.js scene is +Z.
 	// Rotation from +X to +Z around Y is -90 degrees.
 	const textureAlignmentOffsetRad = -Math.PI / 2; // Was previously commented out or a different value
-	let hoverDirty = false;
 	let lastHoverCheckTs = 0;
-	const hoverCheckIntervalMs = 80;
+	const hoverCheckIntervalMs = 180;
 
 	const animate = () => {
 		const onAnimationFrame = async () => {
@@ -508,9 +558,12 @@ export const createScene = async (
 			earthMesh.rotation.y = currentGmstRad + textureAlignmentOffsetRad; // Corrected logic
 
 			geometry.attributes.position.needsUpdate = true;
-			if (hoverDirty && currentTime - lastHoverCheckTs > hoverCheckIntervalMs) {
+			if (
+				mouseInsideScene &&
+				hasMouseCoordinates &&
+				currentTime - lastHoverCheckTs > hoverCheckIntervalMs
+			) {
 				hoverColor();
-				hoverDirty = false;
 				lastHoverCheckTs = currentTime;
 			}
 			if (lerpTarget && !trackTarget) {
@@ -559,6 +612,8 @@ export const createScene = async (
 	window.addEventListener('mousedown', onMouseDown, false);
 	window.addEventListener('mouseup', onMouseUp, false);
 	window.addEventListener('click', onClick, false);
+	renderer.domElement.addEventListener('mouseenter', onCanvasMouseEnter);
+	renderer.domElement.addEventListener('mouseleave', onCanvasMouseLeave);
 	// Return cleanup function
 	return () => {
 		cancelAnimationFrame(animationFrameId); // Cancel the animation loop
@@ -570,6 +625,8 @@ export const createScene = async (
 		window.removeEventListener('mousedown', onMouseDown);
 		window.removeEventListener('mouseup', onMouseUp);
 		window.removeEventListener('click', onClick);
+		renderer.domElement.removeEventListener('mouseenter', onCanvasMouseEnter);
+		renderer.domElement.removeEventListener('mouseleave', onCanvasMouseLeave);
 	};
 };
 
