@@ -93,7 +93,9 @@ const satelliteMaterial = new THREE.ShaderMaterial({
 // scene.add(axesHelper);
 
 const stats = new Stats();
-document.body.appendChild(stats.dom);
+if (import.meta.env.DEV) {
+	document.body.appendChild(stats.dom);
+}
 
 const fitEarthInView = () => {
 	if (!(camera instanceof THREE.PerspectiveCamera)) {
@@ -175,7 +177,11 @@ export const createScene = async (
 		const epochDate = new Date(epoch);
 		return { satrec, epoch: epochDate, norad_cat_id };
 	});
-	const workerCount = Math.max(2, Math.min(8, navigator.hardwareConcurrency ?? 4));
+	const workerUpdateIntervalMs = 250;
+	const workerCount = Math.max(
+		1,
+		Math.min(4, Math.floor((navigator.hardwareConcurrency ?? 4) / 2) || 1)
+	);
 	const satelliteWorkers = Array.from({ length: workerCount }, () => {
 		return new Worker(new URL('./satelliteWorker.js', import.meta.url), { type: 'module' });
 	});
@@ -209,8 +215,24 @@ export const createScene = async (
 			satelliteData,
 			visibility
 		});
+		worker.postMessage({
+			type: 'set-update-interval',
+			intervalMs: workerUpdateIntervalMs
+		});
 	});
 	assignVisibleIndices();
+
+	const handleVisibilityChange = () => {
+		const paused = document.hidden;
+		satelliteWorkers.forEach((worker) => {
+			worker.postMessage({
+				type: 'set-paused',
+				paused
+			});
+		});
+	};
+	document.addEventListener('visibilitychange', handleVisibilityChange);
+	handleVisibilityChange();
 
 	const geometry = new THREE.BufferGeometry();
 	geometry.setAttribute('position', new THREE.BufferAttribute(satellitepositions, 3));
@@ -351,6 +373,7 @@ export const createScene = async (
 	function updateMouseCoordinates(event: MouseEvent) {
 		mouse.x = (event.clientX / renderer.domElement.clientWidth) * 2 - 1;
 		mouse.y = -(event.clientY / renderer.domElement.clientHeight) * 2 + 1;
+		hoverDirty = true;
 	}
 	let startTime: number;
 	let mouseDownEvent: MouseEvent | undefined;
@@ -459,10 +482,15 @@ export const createScene = async (
 	// Vernal Equinox direction in Three.js scene is +Z.
 	// Rotation from +X to +Z around Y is -90 degrees.
 	const textureAlignmentOffsetRad = -Math.PI / 2; // Was previously commented out or a different value
+	let hoverDirty = false;
+	let lastHoverCheckTs = 0;
+	const hoverCheckIntervalMs = 80;
 
 	const animate = () => {
 		const onAnimationFrame = async () => {
-			stats.update();
+			if (import.meta.env.DEV) {
+				stats.update();
+			}
 			const currentTime = new Date().getTime(); // Re-enabled
 			const timeElapsed = currentTime - referenceTime; // Re-enabled
 
@@ -479,9 +507,12 @@ export const createScene = async (
 			// Apply GMST and the texture alignment offset
 			earthMesh.rotation.y = currentGmstRad + textureAlignmentOffsetRad; // Corrected logic
 
-			earthGeometry.attributes.position.needsUpdate = true;
 			geometry.attributes.position.needsUpdate = true;
-			hoverColor();
+			if (hoverDirty && currentTime - lastHoverCheckTs > hoverCheckIntervalMs) {
+				hoverColor();
+				hoverDirty = false;
+				lastHoverCheckTs = currentTime;
+			}
 			if (lerpTarget && !trackTarget) {
 				if (lerpTarget.type === 'satellite' && lerpTarget.indeces) {
 					const lerpTargetVector = new THREE.Vector3(
@@ -533,6 +564,7 @@ export const createScene = async (
 		cancelAnimationFrame(animationFrameId); // Cancel the animation loop
 		satelliteWorkers.forEach((worker) => worker.terminate());
 		orbitWorker.terminate();
+		document.removeEventListener('visibilitychange', handleVisibilityChange);
 		window.removeEventListener('resize', resize);
 		window.removeEventListener('mousemove', updateMouseCoordinates);
 		window.removeEventListener('mousedown', onMouseDown);
