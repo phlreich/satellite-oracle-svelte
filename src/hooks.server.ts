@@ -5,8 +5,8 @@ import { scheduleJob } from 'node-schedule';
 
 initializeDatabaseAndSetCache();
 
-const job = scheduleJob('38 1 * * *', async function () {
-	refreshData();
+scheduleJob('38 1 * * *', async function () {
+	await refreshData();
 });
 
 const RATE_LIMIT_WINDOW_MS = 60_000;
@@ -33,10 +33,19 @@ const checkRateLimit = (ip: string, now: number) => {
 	return entry.count > RATE_LIMIT_MAX_REQUESTS;
 };
 
+const cleanupRateLimitStore = (now: number) => {
+	for (const [ip, entry] of rateLimitStore.entries()) {
+		if (now - entry.windowStart > RATE_LIMIT_WINDOW_MS) {
+			rateLimitStore.delete(ip);
+		}
+	}
+};
+
 export const handle: Handle = async ({ event, resolve }) => {
 	const path = event.url.pathname;
 	if (isRateLimitedPath(path)) {
 		const now = Date.now();
+		cleanupRateLimitStore(now);
 		const clientIp = event.getClientAddress();
 		if (checkRateLimit(clientIp, now)) {
 			return new Response(JSON.stringify({ error: 'Rate limit exceeded' }), {

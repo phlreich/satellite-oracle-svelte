@@ -1,24 +1,27 @@
 // vite.config.ts
 import { sveltekit } from '@sveltejs/kit/vite';
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import type { NextHandleFunction } from 'connect';
 
-/** @type {import('vite').Plugin} */
-const viteServerConfig = {
-    name: 'add headers',
-    configureServer: (server: { middlewares: { use: (arg0: (req: any, res: any, next: any) => void) => void; }; }) => {
-        server.middlewares.use((req, res, next) => {
-            res.setHeader("Access-Control-Allow-Origin", "*");
-            res.setHeader("Access-Control-Allow-Methods", "GET");
-            res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
-            res.setHeader("Cross-Origin-Embedder-Policy", "credentialless");
-            next();
-        });
-    }
+const viteServerConfig: Plugin = {
+	name: 'add headers',
+	configureServer: (server) => {
+		server.middlewares.use(
+			(req: IncomingMessage, res: ServerResponse, next: NextHandleFunction) => {
+				res.setHeader('Access-Control-Allow-Origin', '*');
+				res.setHeader('Access-Control-Allow-Methods', 'GET');
+				res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+				res.setHeader('Cross-Origin-Embedder-Policy', 'credentialless');
+				next();
+			}
+		);
+	}
 };
 
 export default defineConfig({
-    plugins: [viteServerConfig, sveltekit()],
-    server: {
-        hmr: false, // Disable HMR completely
-    }
+	plugins: [viteServerConfig, sveltekit()],
+	server: {
+		hmr: false // Disable HMR completely
+	}
 });

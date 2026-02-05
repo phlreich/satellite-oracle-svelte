@@ -6,10 +6,11 @@ import type { ParseResult } from 'papaparse';
 import fs from 'fs/promises';
 import nfs from 'fs';
 import path from 'path';
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
 import { env } from '$env/dynamic/private';
 import { setCache } from './cache.js';
-import pkg from "node-sql-parser";
+import pkg from 'node-sql-parser';
 const { Parser } = pkg;
 
 const DB_PATH = path.join(process.cwd(), 'src/data/satellite.db');
@@ -148,7 +149,6 @@ export async function initializeDatabaseAndSetCache() {
 		await deleteUnusedRows();
 		await checkpoint();
 		setCache(await getSceneData());
-
 	} catch (err) {
 		console.error('Error checking database tables:', err);
 		// TODO implement error handling
@@ -173,6 +173,11 @@ interface SatelliteRow {
 	OBJECT_NAME: string;
 }
 
+type QueryError = {
+	code: string;
+	error_message: string;
+};
+
 export async function getSceneData(): Promise<Array<[string, string, string, number, string]>> {
 	const sql = `
 	SELECT gp.EPOCH, gp.TLE_LINE1, gp.TLE_LINE2, gp.NORAD_CAT_ID, satcat.OBJECT_NAME
@@ -195,7 +200,7 @@ export async function getSceneData(): Promise<Array<[string, string, string, num
 	return compactRows;
 }
 
-export function runQuery(query: string): any {
+export function runQuery(query: string): Record<string, unknown>[] | QueryError {
 	// parse to ensure only select statements are allowed
 	// a better solution might be a read-only user, but this is not supported by sqlite
 
@@ -207,7 +212,7 @@ export function runQuery(query: string): any {
 			throw new Error(`Query too long (max ${MAX_QUERY_LENGTH} chars)`);
 		}
 
-		const ast = parser.astify(normalizedQuery);//, opt);
+		const ast = parser.astify(normalizedQuery); //, opt);
 		class CustomError extends Error {
 			code: string | undefined;
 		}
@@ -255,13 +260,13 @@ export function runQuery(query: string): any {
 		} else {
 			queryToRun = `${normalizedQuery} LIMIT ${MAX_QUERY_ROWS}`;
 		}
-		
+
 		const stmnt = db.prepare(queryToRun);
-		const result = stmnt.all();
+		const result = stmnt.all() as Record<string, unknown>[];
 
 		// Check if the result set is empty
 		if (result.length === 0) {
-			let e = new CustomError('Query executed successfully but returned no rows.');
+			const e = new CustomError('Query executed successfully but returned no rows.');
 			e.code = 'NO_ROWS';
 			throw e;
 		}
@@ -271,11 +276,15 @@ export function runQuery(query: string): any {
 		console.log(err);
 
 		// Determine the error code based on the properties of the error object
-		const errorCode = (err as any)?.code ? (err as any).code : (err as any).name;
+		const typedError =
+			typeof err === 'object' && err !== null
+				? (err as { code?: string; name?: string; message?: string })
+				: {};
+		const errorCode = typedError.code ?? typedError.name ?? 'Error';
 
 		const detailedErrorMessage = {
 			code: errorCode,
-			error_message: (err as Error).message,
+			error_message: typedError.message ?? 'Unknown error'
 		};
 
 		return detailedErrorMessage;
@@ -348,43 +357,43 @@ export async function updateSatcat() {
 }
 
 export async function updateGP() {
-    console.log('Attempting gp database update');
-    try {
-        const text = await fs.readFile(process.cwd() + '/src/data/gp.csv', 'utf8');
-        const parseResult: ParseResult<{ [key: string]: string }> = Papa.parse(text, {
-            header: true,
-            skipEmptyLines: true
-        });
-        const data = parseResult.data;
+	console.log('Attempting gp database update');
+	try {
+		const text = await fs.readFile(process.cwd() + '/src/data/gp.csv', 'utf8');
+		const parseResult: ParseResult<{ [key: string]: string }> = Papa.parse(text, {
+			header: true,
+			skipEmptyLines: true
+		});
+		const data = parseResult.data;
 
-        db.exec('BEGIN'); // Start transaction
+		db.exec('BEGIN'); // Start transaction
 		db.exec('DELETE FROM gp'); // Clear table
 
-        if (data.length > 0) {
-            const columns = Object.keys(data[0]);
-            const placeholders = columns.map(col => `@${col}`).join(',');
-            const query = `INSERT OR REPLACE INTO gp (${columns.join(',')}) VALUES (${placeholders})`;
-            const insert = db.prepare(query);
+		if (data.length > 0) {
+			const columns = Object.keys(data[0]);
+			const placeholders = columns.map((col) => `@${col}`).join(',');
+			const query = `INSERT OR REPLACE INTO gp (${columns.join(',')}) VALUES (${placeholders})`;
+			const insert = db.prepare(query);
 
-            for (const row of data) {
-                const params: { [key: string]: string | null } = {};
-                columns.forEach(col => {
-                    params[col] = row[col] === '' ? null : row[col];
-                });
+			for (const row of data) {
+				const params: { [key: string]: string | null } = {};
+				columns.forEach((col) => {
+					params[col] = row[col] === '' ? null : row[col];
+				});
 
-                insert.run(params);
-            }
-        }
+				insert.run(params);
+			}
+		}
 
-        db.exec('COMMIT'); // Commit transaction
-    } catch (err) {
-        console.error('Error updating gp database:', err);
-        db.exec('ROLLBACK'); // Rollback in case of an error
-    }
+		db.exec('COMMIT'); // Commit transaction
+	} catch (err) {
+		console.error('Error updating gp database:', err);
+		db.exec('ROLLBACK'); // Rollback in case of an error
+	}
 }
 
-
 export async function updateBoxscore() {
+	let transactionStarted = false;
 	try {
 		console.log('Updating boxscore database');
 		const text = await fs.readFile(process.cwd() + '/src/data/boxscore.csv', 'utf8');
@@ -396,6 +405,7 @@ export async function updateBoxscore() {
 		const data = parseResult.data;
 
 		db.exec('BEGIN');
+		transactionStarted = true;
 		db.prepare('DELETE FROM boxscore').run();
 
 		if (data.length > 0) {
@@ -410,7 +420,7 @@ export async function updateBoxscore() {
 			for (const row of data) {
 				// Convert row to an object with proper named parameters
 				const params: { [key: string]: string | null } = {};
-				columns.forEach((col, index) => {
+				columns.forEach((col) => {
 					params[col] = row[col] === '' ? null : row[col];
 				});
 
@@ -419,8 +429,12 @@ export async function updateBoxscore() {
 		}
 
 		db.exec('COMMIT');
+		transactionStarted = false;
 	} catch (err) {
 		console.error(err);
+		if (transactionStarted) {
+			db.exec('ROLLBACK');
+		}
 	}
 }
 
@@ -511,7 +525,7 @@ export async function updateCSVs(username?: string, password?: string) {
 		const cookie = await getSpaceTrackCookie(username, password);
 
 		const datasets = ['satcat', 'gp', 'boxscore'];
-		for (const [index, dataset] of datasets.entries()) {
+		for (const dataset of datasets) {
 			const data = await fetchSpaceTrackData(
 				cookie,
 				'https://www.space-track.org/basicspacedata/query/class/' + dataset + '/format/csv'
@@ -535,15 +549,17 @@ export async function checkpoint() {
 }
 
 export async function refreshData() {
-	let startTime = new Date().getTime();
+	const startTime = new Date().getTime();
 	console.log('running database refresh node cron job at time: ', startTime);
 	await updateCSVs(env.EMAIL, env.PASSWORD);
 	await updateSatcat();
 	await updateBoxscore();
 	await updateGP();
+	await deleteUnusedRows();
+	setCache(await getSceneData());
 	await checkpoint();
-	let endTime = new Date().getTime();
+	const endTime = new Date().getTime();
 	console.log('finished database refresh node cron job at time: ', endTime);
-	let timeTaken = (endTime - startTime) / 1000;
+	const timeTaken = (endTime - startTime) / 1000;
 	console.log('Time taken:', timeTaken, 'seconds');
 }

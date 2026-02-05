@@ -2,6 +2,7 @@
 import type { RequestHandler } from './$types';
 import { OpenAI } from 'openai';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
 import { OPENAI_API_KEY } from '$env/static/private';
 

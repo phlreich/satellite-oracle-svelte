@@ -5,6 +5,7 @@
 	import { createScene } from '$lib/scene';
 	import { writable, get } from 'svelte/store';
 	import { isMobile } from '$lib/utils';
+	import type { SatRec } from 'satellite.js';
 	import { eciToGeodetic, gstime, propagate, degreesLat, degreesLong } from 'satellite.js';
 	import { base } from '$app/paths';
 
@@ -46,8 +47,8 @@
 		const dx = Number(!verticalDragOnly) * (e.clientX - startX); // Only allow horizontal drag delta if verticalDragOnly is false
 		const dy = Number(!horizontalDragOnly) * (e.clientY - startY); // Only allow vertical drag delta if horizontalDragOnly is false
 
-		const newWidth =  startWidth - dx;
-		const newHeight =  startHeight - dy;
+		const newWidth = startWidth - dx;
+		const newHeight = startHeight - dy;
 
 		chatWindow.style.width = Math.max(newWidth, minWidth) + 'px';
 		chatWindow.style.height = Math.max(newHeight, minHeight) + 'px';
@@ -83,6 +84,7 @@
 	};
 
 	let messageContainer: HTMLElement;
+	let latLongIntervalId: number | undefined;
 
 	export let data: PageData;
 	let el: HTMLCanvasElement;
@@ -100,6 +102,7 @@
 	}
 
 	type Message = UserMessage | ToolMessage;
+	type SharedSceneData = [Array<{ NORAD_CAT_ID: number }>, 'show_objects' | 'draw_orbits'] | [];
 
 	const chatHistory = writable<Message[]>([]);
 
@@ -112,16 +115,16 @@
 	}
 
 	(window as any).getChatHistory = getChatHistory;
-	const sharedData = writable(Array<any>());
+	const sharedData = writable<SharedSceneData>([]);
 
 	// Reactive variable to hold selected satellite info
 	const selectedSatellite = writable<{
 		name: string;
-		details: object;
+		details: object | string;
 		latitude: number;
 		longitude: number;
 		index: number;
-		satrec: any;
+		satrec: SatRec;
 	} | null>(null);
 	const inputValue = writable('');
 	let isMobileView = false;
@@ -143,7 +146,7 @@
 			cleanup = cleanupFunction;
 			hideLoadingScreen();
 		});
-		const setInterval = window.setInterval(() => {
+		latLongIntervalId = window.setInterval(() => {
 			updateLatLong();
 		}, 1000);
 		chatWindow.addEventListener('mousemove', updateCursor);
@@ -154,6 +157,9 @@
 	onDestroy(() => {
 		chatWindow.removeEventListener('mousemove', updateCursor);
 		chatWindow.removeEventListener('mousedown', initDrag);
+		if (latLongIntervalId !== undefined) {
+			window.clearInterval(latLongIntervalId);
+		}
 		if (cleanup) cleanup();
 	});
 
@@ -217,9 +223,9 @@
 				throw new Error(`HTTP error! Status: ${response.status}`);
 			}
 
-		return await response.json();
+			return await response.json();
 		} catch (error) {
-		console.error('Error calling aiChat: ', error);
+			console.error('Error calling aiChat: ', error);
 		}
 	}
 

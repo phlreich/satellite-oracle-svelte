@@ -5,32 +5,17 @@ import Stats from 'three/examples/jsm/libs/stats.module.js';
 import type { Writable } from 'svelte/store';
 import { base } from '$app/paths';
 
-class ThrottledLogger {
-	private lastMessage: string | null = null;
-	private isReadyToLog: boolean = true;
-
-	public log(message: string): void {
-		if (this.isReadyToLog) {
-			console.log(message);
-			this.isReadyToLog = false;
-			setTimeout(() => this.enableLogging(), 1000);
-		} else {
-			this.lastMessage = message; // Update the last message
-		}
-	}
-
-	private enableLogging(): void {
-		this.isReadyToLog = true;
-		if (this.lastMessage !== null) {
-			console.log(this.lastMessage);
-			this.lastMessage = null;
-			// Reset the timer
-			setTimeout(() => this.enableLogging(), 1000);
-		}
-	}
-}
-
-// const logger = new ThrottledLogger();
+type SceneDataRow = [string, string, string, number, string];
+type QueryResultRow = { NORAD_CAT_ID: number };
+type SharedSceneData = [QueryResultRow[], 'show_objects' | 'draw_orbits'] | [];
+type SelectedSatelliteState = {
+	name: string;
+	details: object | string;
+	latitude?: number;
+	longitude?: number;
+	index?: number;
+	satrec?: unknown;
+} | null;
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(
@@ -95,7 +80,6 @@ void main() {
 }
 `;
 
-
 const satelliteMaterial = new THREE.ShaderMaterial({
 	uniforms: {
 		color: { value: new THREE.Color(0xffffff) }
@@ -119,7 +103,7 @@ const fitEarthInView = () => {
 	const verticalFov = THREE.MathUtils.degToRad(camera.fov);
 	const horizontalFov = 2 * Math.atan(Math.tan(verticalFov / 2) * aspect);
 	const limitingFov = Math.min(verticalFov, horizontalFov);
-	const distanceForFit = earthRadius / Math.sin(limitingFov / 2) * 1.08;
+	const distanceForFit = (earthRadius / Math.sin(limitingFov / 2)) * 1.08;
 	const currentDistance = camera.position.length();
 	if (distanceForFit > currentDistance) {
 		const direction = camera.position.clone().normalize();
@@ -138,9 +122,9 @@ const resize = () => {
 
 export const createScene = async (
 	el: HTMLCanvasElement,
-	satellites: any,
-	selectedSatellite: Writable<any>,
-	sharedData: Writable<any>
+	satellites: SceneDataRow[],
+	selectedSatellite: Writable<SelectedSatelliteState>,
+	sharedData: Writable<SharedSceneData>
 ) => {
 	let audioFlag = false;
 	const playAudio = () => {
@@ -184,7 +168,7 @@ export const createScene = async (
 
 	visibility.fill(1.0, 0, 3333);
 
-	const satelliteData = satellites.map((sat: any) => {
+	const satelliteData = satellites.map((sat: SceneDataRow) => {
 		const [epoch, tleLine1, tleLine2, norad_cat_id] = sat;
 		const satrec = twoline2satrec(tleLine1, tleLine2);
 		const epochDate = new Date(epoch);
@@ -276,7 +260,7 @@ export const createScene = async (
 		points.push(surfacePoint);
 		points.push(satelliteVector);
 		const geometry = new THREE.BufferGeometry().setFromPoints(points);
-		let line = new THREE.Line(geometry, material);
+		const line = new THREE.Line(geometry, material);
 		line.renderOrder = 1;
 		line.name = 'verticalLine';
 		scene.add(line);
@@ -284,29 +268,29 @@ export const createScene = async (
 
 	function hoverColor() {
 		raycaster.setFromCamera(mouse, camera);
-		let intersects = raycaster.intersectObjects(scene.children, true);
-		let index = intersects.findIndex((intersect) => intersect.object.type === 'Points');
+		const intersects = raycaster.intersectObjects(scene.children, true);
+		const index = intersects.findIndex((intersect) => intersect.object.type === 'Points');
 
 		if (index !== -1) {
 			const satelliteIndex = intersects[index].index as number;
 			const color = geometry.attributes['customColor'] as THREE.BufferAttribute;
 			color.setXYZ(satelliteIndex, 0.0, 1.0, 0.0);
 			color.needsUpdate = true;
-			if (lastIntersect) {
+			if (lastIntersect !== undefined) {
 				if (lastIntersect !== satelliteIndex) {
 					resetLast(lastIntersect);
 				}
 			}
 			lastIntersect = satelliteIndex;
 		} else {
-			if (lastIntersect) {
+			if (lastIntersect !== undefined) {
 				resetLast(lastIntersect);
 			}
 			lastIntersect = undefined;
 		}
 	}
-	let localSelectedSatellite: any;
-	function handleShortClick(event: any) {
+	let localSelectedSatellite: number | undefined;
+	function handleShortClick(event: MouseEvent) {
 		controls.minDistance = 0;
 
 		mouse.x = (event.clientX / renderer.domElement.clientWidth) * 2 - 1;
@@ -351,7 +335,6 @@ export const createScene = async (
 			indeces: [index * 3, index * 3 + 1, index * 3 + 2],
 			position: undefined
 		};
-		[index * 3, index * 3 + 1, index * 3 + 2];
 		lastIntersect = index;
 
 		drawOrbit(index);
@@ -369,8 +352,8 @@ export const createScene = async (
 		mouse.y = -(event.clientY / renderer.domElement.clientHeight) * 2 + 1;
 	}
 	let startTime: number;
-	let mouseDownEvent: any;
-	function onMouseDown(event: any) {
+	let mouseDownEvent: MouseEvent | undefined;
+	function onMouseDown(event: MouseEvent) {
 		mouseDownEvent = event;
 		startTime = new Date().getTime();
 	}
@@ -388,7 +371,7 @@ export const createScene = async (
 			playAudio();
 		}
 		const shortClickDuration = 230;
-		if (duration < shortClickDuration) {
+		if (duration < shortClickDuration && mouseDownEvent) {
 			handleShortClick(mouseDownEvent);
 		}
 	}
@@ -422,12 +405,15 @@ export const createScene = async (
 		}
 	};
 
-	sharedData.subscribe((data) => {
+	sharedData.subscribe((data: SharedSceneData) => {
+		if (data.length === 0) {
+			return;
+		}
 		if (data[1] === 'show_objects') {
 			for (let i = 0; i < N; i++) {
 				const noradID = satelliteData[i].norad_cat_id;
 				// Check if noradID is present in any of the objects in data[0]
-				if (data[0].some((item: { NORAD_CAT_ID: any }) => item.NORAD_CAT_ID === noradID)) {
+				if (data[0].some((item: QueryResultRow) => item.NORAD_CAT_ID === noradID)) {
 					visibility[i] = 1.0;
 				} else {
 					visibility[i] = 0.0;
@@ -438,7 +424,7 @@ export const createScene = async (
 			for (let i = 0; i < N; i++) {
 				const noradID = satelliteData[i].norad_cat_id;
 				// Check if noradID is present in any of the objects in data[0]
-				if (data[0].some((item: { NORAD_CAT_ID: any }) => item.NORAD_CAT_ID === noradID)) {
+				if (data[0].some((item: QueryResultRow) => item.NORAD_CAT_ID === noradID)) {
 					visibility[i] = 1.0;
 					// console.log('drawing orbit for', noradID);
 					drawOrbit(i);
@@ -481,8 +467,11 @@ export const createScene = async (
 			const timeElapsed = currentTime - referenceTime; // Re-enabled
 
 			// Calculate the Earth's dynamic rotation since the referenceTime
-			const dynamicRotationSinceRefTimeDeg = (timeElapsed % oneSiderealDayInMilliseconds) / oneSiderealDayInMilliseconds * 360; // Re-enabled
-			const dynamicRotationSinceRefTimeRad = THREE.MathUtils.degToRad(dynamicRotationSinceRefTimeDeg); // Re-enabled
+			const dynamicRotationSinceRefTimeDeg =
+				((timeElapsed % oneSiderealDayInMilliseconds) / oneSiderealDayInMilliseconds) * 360; // Re-enabled
+			const dynamicRotationSinceRefTimeRad = THREE.MathUtils.degToRad(
+				dynamicRotationSinceRefTimeDeg
+			); // Re-enabled
 
 			// Current GMST = GMST at reference time + dynamic rotation since reference time
 			const currentGmstRad = gmstAtReferenceTimeRad + dynamicRotationSinceRefTimeRad; // Re-enabled
@@ -521,7 +510,7 @@ export const createScene = async (
 				);
 				trackToTarget(trackTargetVector);
 			}
-			if (localSelectedSatellite) {
+			if (localSelectedSatellite !== undefined) {
 				drawVerticalLine(localSelectedSatellite);
 			}
 			controls.update();
