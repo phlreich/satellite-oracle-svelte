@@ -166,7 +166,8 @@ export const createScene = async (
 		sizes[i] = 2000; // size
 	}
 
-	visibility.fill(1.0, 0, 3333);
+	// Show all loaded objects by default.
+	visibility.fill(1);
 
 	const satelliteData = satellites.map((sat: SceneDataRow) => {
 		const [epoch, tleLine1, tleLine2, norad_cat_id] = sat;
@@ -409,11 +410,11 @@ export const createScene = async (
 		if (data.length === 0) {
 			return;
 		}
+		const selectedNoradIds = new Set(data[0].map((item: QueryResultRow) => item.NORAD_CAT_ID));
 		if (data[1] === 'show_objects') {
 			for (let i = 0; i < N; i++) {
 				const noradID = satelliteData[i].norad_cat_id;
-				// Check if noradID is present in any of the objects in data[0]
-				if (data[0].some((item: QueryResultRow) => item.NORAD_CAT_ID === noradID)) {
+				if (selectedNoradIds.has(noradID)) {
 					visibility[i] = 1.0;
 				} else {
 					visibility[i] = 0.0;
@@ -423,8 +424,7 @@ export const createScene = async (
 		} else if (data[1] === 'draw_orbits') {
 			for (let i = 0; i < N; i++) {
 				const noradID = satelliteData[i].norad_cat_id;
-				// Check if noradID is present in any of the objects in data[0]
-				if (data[0].some((item: QueryResultRow) => item.NORAD_CAT_ID === noradID)) {
+				if (selectedNoradIds.has(noradID)) {
 					visibility[i] = 1.0;
 					// console.log('drawing orbit for', noradID);
 					drawOrbit(i);
