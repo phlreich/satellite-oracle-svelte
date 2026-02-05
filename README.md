@@ -1,7 +1,9 @@
 The skies are busy, we prosper.
+
 ## Getting Started
 
 ### Prerequisites
+
 - A free account at [space-track.org](https://www.space-track.org/auth/login)
 - OpenAI API Key
 
@@ -10,6 +12,7 @@ The skies are busy, we prosper.
 1. Clone the repository
 
 2. Create a `.env` file by copying the example:
+
    ```bash
    cp .env.example .env
    ```
@@ -59,6 +62,7 @@ The application includes a chat interface that allows you to filter and interact
 This will filter the displayed objects to only those that match your query, providing a powerful tool for exploring the data.
 
 //TODO
+
 - correct the relative positions
 - add the moon
 - implement orbit ellipses

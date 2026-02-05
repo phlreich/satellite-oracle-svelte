@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 	<head>
 		<meta charset="utf-8" />
@@ -13,12 +13,14 @@
 				z-index: 99999;
 				display: grid;
 				place-items: center;
-				background: 
+				background:
 					radial-gradient(ellipse 80% 50% at 50% 20%, rgba(40, 80, 140, 0.15), transparent 50%),
 					radial-gradient(ellipse 60% 40% at 80% 70%, rgba(20, 60, 120, 0.1), transparent 40%),
 					#030508;
 				font-family: 'IBM Plex Mono', 'SF Mono', Consolas, monospace;
-				transition: opacity 0.6s ease-out, visibility 0.6s ease-out;
+				transition:
+					opacity 0.6s ease-out,
+					visibility 0.6s ease-out;
 			}
 			#loading-screen.fade-out {
 				opacity: 0;
@@ -45,7 +47,7 @@
 				margin: -20px 0 0 -20px;
 				border-radius: 50%;
 				background: linear-gradient(135deg, #1a3a5c 0%, #0a1a2e 50%, #050d15 100%);
-				box-shadow: 
+				box-shadow:
 					inset -8px -4px 12px rgba(0, 0, 0, 0.6),
 					inset 4px 2px 8px rgba(80, 140, 200, 0.2),
 					0 0 30px rgba(40, 100, 160, 0.15);
@@ -81,7 +83,7 @@
 				margin-left: -4px;
 				background: #e8f0f8;
 				border-radius: 50%;
-				box-shadow: 
+				box-shadow:
 					0 0 12px 3px rgba(200, 220, 255, 0.5),
 					0 0 24px 6px rgba(150, 180, 220, 0.3);
 			}
@@ -102,21 +104,50 @@
 			.loader-text span {
 				animation: pulse 1.5s ease-in-out infinite;
 			}
-			.loader-text span:nth-child(1) { animation-delay: 0s; }
-			.loader-text span:nth-child(2) { animation-delay: 0.1s; }
-			.loader-text span:nth-child(3) { animation-delay: 0.2s; }
-			.loader-text span:nth-child(4) { animation-delay: 0.3s; }
-			.loader-text span:nth-child(5) { animation-delay: 0.4s; }
-			.loader-text span:nth-child(6) { animation-delay: 0.5s; }
-			.loader-text span:nth-child(7) { animation-delay: 0.6s; }
-			.loader-text span:nth-child(8) { animation-delay: 0.1s; }
-			.loader-text span:nth-child(9) { animation-delay: 0.2s; }
-			.loader-text span:nth-child(10) { animation-delay: 0.3s; }
-			.loader-text span:nth-child(11) { animation-delay: 0.4s; }
-			.loader-text span:nth-child(12) { animation-delay: 0.5s; }
+			.loader-text span:nth-child(1) {
+				animation-delay: 0s;
+			}
+			.loader-text span:nth-child(2) {
+				animation-delay: 0.1s;
+			}
+			.loader-text span:nth-child(3) {
+				animation-delay: 0.2s;
+			}
+			.loader-text span:nth-child(4) {
+				animation-delay: 0.3s;
+			}
+			.loader-text span:nth-child(5) {
+				animation-delay: 0.4s;
+			}
+			.loader-text span:nth-child(6) {
+				animation-delay: 0.5s;
+			}
+			.loader-text span:nth-child(7) {
+				animation-delay: 0.6s;
+			}
+			.loader-text span:nth-child(8) {
+				animation-delay: 0.1s;
+			}
+			.loader-text span:nth-child(9) {
+				animation-delay: 0.2s;
+			}
+			.loader-text span:nth-child(10) {
+				animation-delay: 0.3s;
+			}
+			.loader-text span:nth-child(11) {
+				animation-delay: 0.4s;
+			}
+			.loader-text span:nth-child(12) {
+				animation-delay: 0.5s;
+			}
 			@keyframes pulse {
-				0%, 100% { opacity: 0.4; }
-				50% { opacity: 1; }
+				0%,
+				100% {
+					opacity: 0.4;
+				}
+				50% {
+					opacity: 1;
+				}
 			}
 			/* Subtle starfield */
 			.stars {
@@ -133,16 +164,16 @@
 				background: white;
 				border-radius: 50%;
 				box-shadow:
-					120px 80px 0 rgba(255,255,255,0.3),
-					240px 150px 0 rgba(255,255,255,0.5),
-					80px 220px 0 rgba(255,255,255,0.2),
-					320px 60px 0 rgba(255,255,255,0.4),
-					180px 280px 0 rgba(255,255,255,0.3),
-					400px 180px 0 rgba(255,255,255,0.5),
-					50px 340px 0 rgba(255,255,255,0.2),
-					280px 320px 0 rgba(255,255,255,0.4),
-					450px 90px 0 rgba(255,255,255,0.3),
-					150px 400px 0 rgba(255,255,255,0.2);
+					120px 80px 0 rgba(255, 255, 255, 0.3),
+					240px 150px 0 rgba(255, 255, 255, 0.5),
+					80px 220px 0 rgba(255, 255, 255, 0.2),
+					320px 60px 0 rgba(255, 255, 255, 0.4),
+					180px 280px 0 rgba(255, 255, 255, 0.3),
+					400px 180px 0 rgba(255, 255, 255, 0.5),
+					50px 340px 0 rgba(255, 255, 255, 0.2),
+					280px 320px 0 rgba(255, 255, 255, 0.4),
+					450px 90px 0 rgba(255, 255, 255, 0.3),
+					150px 400px 0 rgba(255, 255, 255, 0.2);
 				animation: twinkle 4s ease-in-out infinite;
 			}
 			.stars::after {
@@ -150,8 +181,13 @@
 				animation-delay: -2s;
 			}
 			@keyframes twinkle {
-				0%, 100% { opacity: 0.5; }
-				50% { opacity: 1; }
+				0%,
+				100% {
+					opacity: 0.5;
+				}
+				50% {
+					opacity: 1;
+				}
 			}
 		</style>
 	</head>
@@ -166,7 +202,8 @@
 					<div class="satellite"></div>
 				</div>
 				<div class="loader-text">
-					<span>I</span><span>N</span><span>I</span><span>T</span><span>I</span><span>A</span><span>L</span><span>I</span><span>Z</span><span>I</span><span>N</span><span>G</span>
+					<span>I</span><span>N</span><span>I</span><span>T</span><span>I</span><span>A</span
+					><span>L</span><span>I</span><span>Z</span><span>I</span><span>N</span><span>G</span>
 				</div>
 			</div>
 		</div>
