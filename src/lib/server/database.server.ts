@@ -15,7 +15,6 @@ const { Parser } = pkg;
 
 const DB_PATH = path.join(process.cwd(), 'src/data/satellite.db');
 const MAX_QUERY_LENGTH = 2000;
-const MAX_QUERY_ROWS = 5000;
 const ALLOWED_TABLES = new Set(['gp', 'satcat']);
 
 const db = new Database(DB_PATH);
@@ -228,7 +227,6 @@ export function runQuery(query: string): Record<string, unknown>[] | QueryError 
 			set_op?: unknown;
 			union?: unknown;
 			from?: Array<{ table?: unknown; expr?: unknown }>;
-			limit?: { value?: Array<{ value?: unknown }> };
 		};
 		if (selectAst.with || selectAst.set_op || selectAst.union) {
 			throw new CustomError('Only simple SELECT statements are allowed.');
@@ -248,20 +246,7 @@ export function runQuery(query: string): Record<string, unknown>[] | QueryError 
 			}
 		}
 
-		let queryToRun = normalizedQuery;
-		const limitValue = Array.isArray(selectAst.limit?.value)
-			? selectAst.limit.value[0]?.value
-			: undefined;
-		if (limitValue !== undefined) {
-			const limitNumber = Number(limitValue);
-			if (!Number.isFinite(limitNumber) || limitNumber > MAX_QUERY_ROWS) {
-				throw new CustomError(`Query limit too high (max ${MAX_QUERY_ROWS})`);
-			}
-		} else {
-			queryToRun = `${normalizedQuery} LIMIT ${MAX_QUERY_ROWS}`;
-		}
-
-		const stmnt = db.prepare(queryToRun);
+		const stmnt = db.prepare(normalizedQuery);
 		const result = stmnt.all() as Record<string, unknown>[];
 
 		// Check if the result set is empty
