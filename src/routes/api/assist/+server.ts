@@ -80,7 +80,9 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
 				typeof body.sceneContext?.selectedNoradId === 'number'
 					? body.sceneContext.selectedNoradId
 					: null,
-			latestUserMessage
+			latestUserMessage,
+			messages: body.messages,
+			sceneContext: body.sceneContext ?? null
 		});
 
 		const result = await runAssist(body, { requestId });

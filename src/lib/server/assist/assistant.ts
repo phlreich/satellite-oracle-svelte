@@ -338,6 +338,31 @@ function buildInstructions(sceneContext: ReturnType<typeof normalizeSceneContext
 	].join('\n');
 }
 
+function summarizeTools(tools: FunctionTool[]) {
+	return tools.map((tool) => tool.name);
+}
+
+function serializeResponseOutput(response: Response) {
+	return response.output.map((item) => {
+		if (item.type === 'function_call') {
+			return {
+				type: item.type,
+				name: item.name,
+				call_id: item.call_id,
+				arguments: item.arguments
+			};
+		}
+		if (item.type === 'message') {
+			return {
+				type: item.type,
+				role: item.role,
+				content: item.content
+			};
+		}
+		return item;
+	});
+}
+
 function resolveCaseInsensitiveColumn(row: Record<string, unknown>, wanted: string): string | null {
 	const match = Object.keys(row).find((key) => key.toLowerCase() === wanted.toLowerCase());
 	return match ?? null;
@@ -405,6 +430,11 @@ async function executeToolCall({
 	pendingAction: AssistSceneAction;
 	logger: ReturnType<typeof createLogger>;
 }) {
+	logger.info('assist tool execution started', {
+		toolName,
+		toolArgs
+	});
+
 	if (toolName === 'sql_select') {
 		const sql = normalizeSelectSql(toolArgs.sql);
 		if (!sql) {
@@ -413,6 +443,7 @@ async function executeToolCall({
 		const previewRows = clampInt(toolArgs.preview_rows, 1, MAX_PREVIEW_ROWS, DEFAULT_PREVIEW_ROWS);
 		const sampleRows = clampInt(toolArgs.sample_rows, 0, MAX_SAMPLE_ROWS, DEFAULT_SAMPLE_ROWS);
 		try {
+			const startedAt = Date.now();
 			const stmt = db.prepare(sql);
 			if (!stmt.reader) {
 				return { ok: false, error: 'Query must return rows.' };
@@ -424,9 +455,13 @@ async function executeToolCall({
 			const resultRef = `result_${Date.now()}_${Math.floor(Math.random() * 1_000_000)}`;
 			queryResults.set(resultRef, { rows, columns });
 			logger.info('sql_select executed', {
+				sql,
+				previewRowsRequested: previewRows,
+				sampleRowsRequested: sampleRows,
 				rows: rows.length,
 				columns: columns.length,
-				resultRef
+				resultRef,
+				durationMs: Date.now() - startedAt
 			});
 			return {
 				ok: true,
@@ -477,7 +512,8 @@ async function executeToolCall({
 		logger.info('visibility action prepared from result', {
 			mode,
 			returnedCount: extraction.ids.length,
-			resolvedColumn: extraction.resolvedColumn
+			resolvedColumn: extraction.resolvedColumn,
+			noradCatIds: extraction.ids
 		});
 		return {
 			ok: true,
@@ -499,6 +535,7 @@ async function executeToolCall({
 			returnedCount: noradIds.length
 		};
 		logger.info('visibility action prepared', { mode, returnedCount: noradIds.length });
+		logger.info('visibility IDs prepared', { noradCatIds: noradIds });
 		return { ok: true, mode, returned_count: noradIds.length };
 	}
 
@@ -567,21 +604,39 @@ export async function runAssist(
 	logger.info('assist tool loop started', {
 		messageCount: input.length,
 		selectedNoradId: sceneContext.selectedNoradId,
-		visibleCount: sceneContext.visibleCount
+		visibleCount: sceneContext.visibleCount,
+		messages: body.messages,
+		sceneContext,
+		input,
+		instructions
 	});
 
 	let response: Response;
+	const initialRequest = {
+		model,
+		instructions,
+		input,
+		tools: ASSIST_TOOLS
+	};
+	logger.info('openai responses.create request', {
+		step: 'initial',
+		payload: {
+			...initialRequest,
+			tools: summarizeTools(ASSIST_TOOLS)
+		}
+	});
 	try {
-		response = await openai.responses.create({
-			model,
-			instructions,
-			input,
-			tools: ASSIST_TOOLS
-		});
+		response = await openai.responses.create(initialRequest);
 	} catch (error) {
 		logger.error('assist initial response failed', { error: serializeError(error) });
 		throw error;
 	}
+	logger.info('openai responses.create response', {
+		step: 'initial',
+		responseId: response.id ?? null,
+		outputText: response.output_text ?? '',
+		output: serializeResponseOutput(response)
+	});
 
 	for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
 		const functionCalls = response.output.filter((item) => item.type === 'function_call');
@@ -591,7 +646,12 @@ export async function runAssist(
 
 		logger.info('assist executing tool round', {
 			round,
-			toolCalls: functionCalls.length
+			toolCalls: functionCalls.length,
+			functionCalls: functionCalls.map((call) => ({
+				name: call.name,
+				callId: call.call_id,
+				arguments: call.arguments
+			}))
 		});
 
 		const toolOutputs = [] as Array<{
@@ -602,12 +662,25 @@ export async function runAssist(
 
 		for (const call of functionCalls) {
 			const args = parseToolArgs(call.arguments);
+			logger.info('assist tool call received', {
+				round,
+				toolName: call.name,
+				callId: call.call_id,
+				argumentsRaw: call.arguments,
+				argumentsParsed: args
+			});
 			const output = await executeToolCall({
 				toolName: call.name,
 				toolArgs: args,
 				queryResults,
 				pendingAction: action,
 				logger
+			});
+			logger.info('assist tool call output', {
+				round,
+				toolName: call.name,
+				callId: call.call_id,
+				output
 			});
 			toolOutputs.push({
 				type: 'function_call_output',
@@ -616,17 +689,33 @@ export async function runAssist(
 			});
 		}
 
+		const followupRequest = {
+			model,
+			previous_response_id: response.id,
+			input: toolOutputs,
+			tools: ASSIST_TOOLS
+		};
+		logger.info('openai responses.create request', {
+			step: 'followup',
+			round,
+			payload: {
+				...followupRequest,
+				tools: summarizeTools(ASSIST_TOOLS)
+			}
+		});
 		try {
-			response = await openai.responses.create({
-				model,
-				previous_response_id: response.id,
-				input: toolOutputs,
-				tools: ASSIST_TOOLS
-			});
+			response = await openai.responses.create(followupRequest);
 		} catch (error) {
 			logger.error('assist tool round failed', { error: serializeError(error), round });
 			throw error;
 		}
+		logger.info('openai responses.create response', {
+			step: 'followup',
+			round,
+			responseId: response.id ?? null,
+			outputText: response.output_text ?? '',
+			output: serializeResponseOutput(response)
+		});
 	}
 
 	const hasSceneAction = Boolean(action.visibility || action.focus);
@@ -638,7 +727,9 @@ export async function runAssist(
 	logger.info('assist tool loop completed', {
 		hasVisibilityAction: Boolean(action.visibility),
 		hasFocusAction: Boolean(action.focus),
-		visibilityCount: action.visibility?.returnedCount ?? null
+		visibilityCount: action.visibility?.returnedCount ?? null,
+		action,
+		assistantMessage
 	});
 
 	return {
