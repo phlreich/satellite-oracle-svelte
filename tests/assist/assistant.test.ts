@@ -26,41 +26,39 @@ vi.mock('$env/dynamic/private', () => ({ env: { OPENAI_ASSIST_MODEL: 'gpt-5-mini
 
 import { runAssist } from '../../src/lib/server/assist/assistant';
 
-function textResponse(id: string, outputText: string) {
-	return {
-		id,
-		output: [],
-		output_text: outputText
-	};
-}
-
-function toolCallResponse(
-	id: string,
-	toolName: 'execute_catalog_query' | 'get_object_details' | 'scene_context',
-	args: Record<string, unknown>,
-	callId = 'call_1'
-) {
+function plannerResponse(id: string, plan: Record<string, unknown>) {
 	return {
 		id,
 		output: [
 			{
 				type: 'function_call',
-				name: toolName,
-				call_id: callId,
-				arguments: JSON.stringify(args)
+				name: 'propose_assist_plan',
+				call_id: 'call_plan_1',
+				arguments: JSON.stringify(plan)
 			}
 		],
 		output_text: ''
 	};
 }
 
-describe('runAssist behavior', () => {
+describe('runAssist planner/executor behavior', () => {
 	beforeEach(() => {
 		createMock.mockReset();
 	});
 
-	it('keeps analytical count prompts non-mutating and deterministic', async () => {
-		createMock.mockResolvedValueOnce(textResponse('resp_1', 'Applied your request.'));
+	it('executes count plans deterministically without scene mutation', async () => {
+		createMock.mockResolvedValueOnce(
+			plannerResponse('resp_plan_1', {
+				kind: 'count',
+				query: {
+					queryType: 'count',
+					filters: [
+						{ field: 'country_code', op: 'eq', value: 'germany' },
+						{ field: 'object_type', op: 'eq', value: 'payload' }
+					]
+				}
+			})
+		);
 
 		const result = await runAssist({
 			messages: [{ role: 'user', content: 'how many german payload objects are there?' }],
@@ -73,21 +71,22 @@ describe('runAssist behavior', () => {
 		expect(createMock).toHaveBeenCalledTimes(1);
 		expect(createMock.mock.calls[0][0].tool_choice).toEqual({
 			type: 'function',
-			name: 'execute_catalog_query'
+			name: 'propose_assist_plan'
 		});
 	});
 
-	it('returns a scene action for view-update prompts when query tool is used', async () => {
-		createMock
-			.mockResolvedValueOnce(
-				toolCallResponse('resp_1', 'execute_catalog_query', {
+	it('executes view-update plans and returns structured action', async () => {
+		createMock.mockResolvedValueOnce(
+			plannerResponse('resp_plan_2', {
+				kind: 'view_update',
+				query: {
 					queryType: 'select',
 					mode: 'replace',
 					limit: 3,
 					filters: [{ field: 'object_name', op: 'contains', value: 'starlink' }]
-				})
-			)
-			.mockResolvedValueOnce(textResponse('resp_2', 'Selection updated successfully.'));
+				}
+			})
+		);
 
 		const result = await runAssist({
 			messages: [{ role: 'user', content: 'show all starlink satellites' }],
@@ -98,18 +97,15 @@ describe('runAssist behavior', () => {
 		expect(result.action?.mode).toBe('replace');
 		expect(result.action?.returnedCount).toBe(3);
 		expect(result.action?.noradCatIds.length).toBe(3);
-		expect(result.assistantMessage).toBe('Selection updated successfully.');
-		expect(createMock.mock.calls[0][0].tool_choice).toBe('auto');
+		expect(result.assistantMessage).toContain('Scene mode: replace.');
 	});
 
-	it('forces object-details tool first for selected-orbit explanation prompts', async () => {
-		createMock
-			.mockResolvedValueOnce(
-				toolCallResponse('resp_1', 'get_object_details', {
-					norad_cat_id: 25544
-				})
-			)
-			.mockResolvedValueOnce(textResponse('resp_2', 'Orbit explanation.'));
+	it('executes selected-object explanation plans without scene mutation', async () => {
+		createMock.mockResolvedValueOnce(
+			plannerResponse('resp_plan_3', {
+				kind: 'explain_selected'
+			})
+		);
 
 		const result = await runAssist({
 			messages: [{ role: 'user', content: 'why is this orbit so high up?' }],
@@ -117,21 +113,23 @@ describe('runAssist behavior', () => {
 		});
 
 		expect(result.action).toBeNull();
-		expect(createMock.mock.calls[0][0].tool_choice).toEqual({
-			type: 'function',
-			name: 'get_object_details'
-		});
+		expect(result.assistantMessage).toContain('Selected object:');
 		expect(result.assistantMessage).toContain('No scene change was applied.');
 	});
 
-	it('retries once without previous_response_id when stale thread id is rejected', async () => {
+	it('retries planner request without previous_response_id on stale-thread errors', async () => {
 		createMock
 			.mockRejectedValueOnce(
 				Object.assign(new Error('Invalid previous_response_id'), {
 					param: 'previous_response_id'
 				})
 			)
-			.mockResolvedValueOnce(textResponse('resp_2', 'Hello from assistant runtime.'));
+			.mockResolvedValueOnce(
+				plannerResponse('resp_plan_4', {
+					kind: 'clarify',
+					question: 'What would you like me to filter or count?'
+				})
+			);
 
 		const result = await runAssist({
 			messages: [{ role: 'user', content: 'hey there' }],
@@ -141,6 +139,6 @@ describe('runAssist behavior', () => {
 		expect(createMock).toHaveBeenCalledTimes(2);
 		expect(createMock.mock.calls[0][0].previous_response_id).toBe('resp_invalid');
 		expect(createMock.mock.calls[1][0].previous_response_id).toBeUndefined();
-		expect(result.assistantMessage).toContain('Hello from assistant runtime.');
+		expect(result.assistantMessage).toContain('What would you like me to filter or count?');
 	});
 });

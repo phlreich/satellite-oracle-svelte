@@ -12,7 +12,10 @@ function runCount(
 			| 'apogee_km'
 			| 'perigee_km'
 			| 'period_minutes'
-			| 'inclination_deg';
+			| 'inclination_deg'
+			| 'orbit_class'
+			| 'site'
+			| 'rcs_size';
 		op: 'eq' | 'neq' | 'contains' | 'in' | 'gt' | 'gte' | 'lt' | 'lte';
 		value?: string | number;
 		values?: Array<string | number>;
@@ -54,5 +57,16 @@ describe('queryRuntime normalization', () => {
 		const stringValueCount = runCount([{ field: 'launch_year', op: 'lt', value: '2000' }]);
 
 		expect(numericValueCount).toBe(stringValueCount);
+	});
+
+	it('supports orbit_class aliases and returns facets', () => {
+		const result = runCatalogQuery({
+			queryType: 'count',
+			filters: [{ field: 'orbit_class', op: 'eq', value: 'geostationary' }]
+		});
+
+		expect(result.totalCount).toBeGreaterThan(0);
+		expect(Array.isArray(result.facets.orbitClass)).toBe(true);
+		expect(result.facets.orbitClass.length).toBeGreaterThan(0);
 	});
 });

@@ -29,7 +29,10 @@ export type CatalogFilterField =
 	| 'apogee_km'
 	| 'perigee_km'
 	| 'period_minutes'
-	| 'inclination_deg';
+	| 'inclination_deg'
+	| 'orbit_class'
+	| 'site'
+	| 'rcs_size';
 
 export type CatalogFilterOp = 'eq' | 'neq' | 'contains' | 'in' | 'gt' | 'gte' | 'lt' | 'lte';
 
@@ -59,6 +62,21 @@ export type CatalogObjectRow = {
 	perigeeKm: number | null;
 	periodMinutes: number | null;
 	inclinationDeg: number | null;
+	orbitClass: 'LEO' | 'MEO' | 'GEO' | 'HEO' | 'UNKNOWN';
+	site: string | null;
+	rcsSize: string | null;
+};
+
+export type CatalogFacetBucket = {
+	value: string;
+	count: number;
+};
+
+export type CatalogFacets = {
+	objectType: CatalogFacetBucket[];
+	countryCode: CatalogFacetBucket[];
+	orbitClass: CatalogFacetBucket[];
+	launchYear: CatalogFacetBucket[];
 };
 
 export type CatalogQueryResult = {
@@ -69,6 +87,7 @@ export type CatalogQueryResult = {
 	noradCatIds: number[];
 	sample: CatalogObjectRow[];
 	filterSummary: string;
+	facets: CatalogFacets;
 };
 
 export type ObjectDetails = CatalogObjectRow & {

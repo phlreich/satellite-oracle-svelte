@@ -1,10 +1,4 @@
 import { OpenAI } from 'openai';
-import type {
-	EasyInputMessage,
-	FunctionTool,
-	Response,
-	ResponseFunctionToolCall
-} from 'openai/resources/responses/responses';
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
 import { OPENAI_API_KEY } from '$env/static/private';
@@ -12,116 +6,16 @@ import { OPENAI_API_KEY } from '$env/static/private';
 // @ts-ignore
 import { env } from '$env/dynamic/private';
 import { getObjectDetails, runCatalogQuery } from './queryRuntime';
+import { buildHeuristicQuery, inferViewMode, planAssistTurn } from './planner';
 import type {
 	AssistRequestBody,
 	AssistResponse,
-	CatalogQuerySpec,
+	CatalogFacetBucket,
 	CatalogQueryResult,
+	CatalogQuerySpec,
 	ObjectDetails,
 	SceneContext
 } from './types';
-
-type UserIntent = 'analytical' | 'view_update';
-type AnalyticalKind = 'count' | 'explain' | 'other';
-
-const MAX_TOOL_STEPS = 6;
-
-const ASSIST_TOOLS: FunctionTool[] = [
-	{
-		type: 'function',
-		name: 'scene_context',
-		description: 'Get scene context (selected object and visibility statistics).',
-		strict: false,
-		parameters: {
-			type: 'object',
-			properties: {},
-			additionalProperties: false
-		}
-	},
-	{
-		type: 'function',
-		name: 'execute_catalog_query',
-		description:
-			'Run a read-only catalog query. Use queryType=count for analytical questions and queryType=select for scene update requests.',
-		strict: false,
-		parameters: {
-			type: 'object',
-			properties: {
-				queryType: { type: 'string', enum: ['count', 'select'] },
-				mode: { type: 'string', enum: ['replace', 'add', 'remove'] },
-				limit: { type: 'number' },
-				filters: {
-					type: 'array',
-					items: {
-						type: 'object',
-						properties: {
-							field: {
-								type: 'string',
-								enum: [
-									'norad_cat_id',
-									'object_name',
-									'object_type',
-									'country_code',
-									'launch_year',
-									'apogee_km',
-									'perigee_km',
-									'period_minutes',
-									'inclination_deg'
-								]
-							},
-							op: {
-								type: 'string',
-								enum: ['eq', 'neq', 'contains', 'in', 'gt', 'gte', 'lt', 'lte']
-							},
-							value: {
-								anyOf: [{ type: 'string' }, { type: 'number' }]
-							},
-							values: {
-								type: 'array',
-								items: {
-									anyOf: [{ type: 'string' }, { type: 'number' }]
-								}
-							}
-						},
-						required: ['field', 'op'],
-						additionalProperties: false
-					}
-				}
-			},
-			required: ['queryType', 'filters'],
-			additionalProperties: false
-		}
-	},
-	{
-		type: 'function',
-		name: 'get_object_details',
-		description: 'Get details for one NORAD object, useful for explaining a selected orbit.',
-		strict: false,
-		parameters: {
-			type: 'object',
-			properties: {
-				norad_cat_id: { type: 'number' }
-			},
-			required: ['norad_cat_id'],
-			additionalProperties: false
-		}
-	}
-];
-
-const SYSTEM_PROMPT = `
-You are Satellite Oracle's AI assistant.
-You can answer analytical questions and scene-update requests.
-Use tools, do not invent counts or object details.
-
-Rules:
-- For analytical questions (how many/count/why/explain), do NOT request scene updates.
-- For analytical questions, prefer execute_catalog_query with queryType=count.
-- For selected-object explanations, call get_object_details using scene_context.selectedNoradId.
-- For view updates (show/hide/filter/display), use execute_catalog_query with queryType=select and mode replace/add/remove.
-- If queryType=count result is zero, still provide a useful answer and suggest likely alternatives.
-- If no selected object exists for a "this orbit" question, ask the user to select one.
-- Keep responses short and explicit.
-`;
 
 function getLatestUserMessage(messages: AssistRequestBody['messages']): string {
 	for (let i = messages.length - 1; i >= 0; i--) {
@@ -130,51 +24,6 @@ function getLatestUserMessage(messages: AssistRequestBody['messages']): string {
 		}
 	}
 	return '';
-}
-
-function inferUserIntent(messages: AssistRequestBody['messages']): UserIntent {
-	const latest = getLatestUserMessage(messages).toLowerCase();
-	const analytical =
-		/how many|count|number of|why|explain|what does|what is|how high|how low|statistics/.test(
-			latest
-		);
-	const view =
-		/\bshow|display|hide|highlight|focus|draw|plot|visuali[sz]e|filter|only|remove|add\b/.test(
-			latest
-		);
-	if (analytical && !view) {
-		return 'analytical';
-	}
-	return 'view_update';
-}
-
-function inferAnalyticalKind(latestMessage: string): AnalyticalKind {
-	const latest = latestMessage.toLowerCase();
-	if (/\bhow many|count|number of|total\b/.test(latest)) {
-		return 'count';
-	}
-	if (/\bwhy|explain|what does|what is|how high|how low\b/.test(latest)) {
-		return 'explain';
-	}
-	return 'other';
-}
-
-function buildInitialToolChoice(
-	step: number,
-	intent: UserIntent,
-	analyticalKind: AnalyticalKind,
-	selectedNoradId: number | null
-): 'auto' | { type: 'function'; name: 'execute_catalog_query' | 'get_object_details' } {
-	if (step > 0 || intent !== 'analytical') {
-		return 'auto';
-	}
-	if (analyticalKind === 'count') {
-		return { type: 'function', name: 'execute_catalog_query' };
-	}
-	if (analyticalKind === 'explain' && selectedNoradId !== null) {
-		return { type: 'function', name: 'get_object_details' };
-	}
-	return 'auto';
 }
 
 function normalizeSceneContext(sceneContext?: SceneContext) {
@@ -201,303 +50,202 @@ function normalizeSceneContext(sceneContext?: SceneContext) {
 	};
 }
 
-function buildInitialInput(messages: AssistRequestBody['messages']): EasyInputMessage[] {
-	const cleaned = messages
-		.filter((message) => typeof message.content === 'string' && message.content.trim() !== '')
-		.slice(-30)
-		.map((message) => ({ role: message.role, content: message.content.trim() }));
-	if (cleaned.length === 0) {
-		return [{ role: 'user', content: 'Show currently visible objects.' }];
-	}
-	return cleaned;
-}
-
-function extractToolCalls(response: Response): ResponseFunctionToolCall[] {
-	return response.output.filter(
-		(item): item is ResponseFunctionToolCall => item.type === 'function_call'
-	);
-}
-
-function parseJson(text: string): unknown {
-	try {
-		return JSON.parse(text);
-	} catch {
+function topFacetSummary(label: string, buckets: CatalogFacetBucket[], limit = 3): string | null {
+	const top = buckets
+		.filter(
+			(bucket) => bucket.value.trim() !== '' && bucket.value.trim().toLowerCase() !== 'unknown'
+		)
+		.slice(0, limit)
+		.map((bucket) => `${bucket.value} (${bucket.count})`);
+	if (top.length === 0) {
 		return null;
 	}
+	return `${label}: ${top.join(', ')}`;
 }
 
-function shouldRetryWithoutPreviousResponse(error: unknown): boolean {
-	if (!error || typeof error !== 'object') {
-		return false;
+function buildCountMessage(result: CatalogQueryResult): string {
+	const parts = [`Count: ${result.totalCount} objects match (${result.filterSummary}).`];
+	const objectTypeSummary = topFacetSummary('Top object types', result.facets.objectType);
+	const countrySummary = topFacetSummary('Top countries', result.facets.countryCode);
+	const orbitSummary = topFacetSummary('Top orbit classes', result.facets.orbitClass);
+	if (objectTypeSummary) {
+		parts.push(objectTypeSummary);
 	}
-	const candidate = error as { message?: string; param?: string };
-	const message = (candidate.message ?? '').toLowerCase();
-	const param = (candidate.param ?? '').toLowerCase();
-	return (
-		param.includes('previous_response_id') ||
-		message.includes('previous_response_id') ||
-		message.includes('response id') ||
-		message.includes('not found')
-	);
+	if (countrySummary) {
+		parts.push(countrySummary);
+	}
+	if (orbitSummary) {
+		parts.push(orbitSummary);
+	}
+	parts.push('No scene change was applied.');
+	return parts.join('\n');
 }
 
-function buildHeuristicCountSpec(latestMessage: string): CatalogQuerySpec | null {
-	const latest = latestMessage.toLowerCase();
-	const filters: CatalogQuerySpec['filters'] = [];
+function buildViewUpdateMessage(result: CatalogQueryResult): string {
+	const capped =
+		result.returnedCount < result.totalCount
+			? `Returned ${result.returnedCount} of ${result.totalCount} matches due to limit.`
+			: `Returned all ${result.totalCount} matches.`;
+	const orbitSummary = topFacetSummary('Orbit classes in result', result.facets.orbitClass);
+	const parts = [
+		`Applied filter (${result.filterSummary}).`,
+		capped,
+		`Scene mode: ${result.mode}.`
+	];
+	if (orbitSummary) {
+		parts.push(orbitSummary);
+	}
+	return parts.join('\n');
+}
 
-	if (/\bstarlink\b/.test(latest)) {
-		filters.push({ field: 'object_name', op: 'contains', value: 'starlink' });
+function buildExplainMessage(details: ObjectDetails): string {
+	const apogee = details.apogeeKm !== null ? `${details.apogeeKm.toFixed(1)} km` : 'unknown';
+	const perigee = details.perigeeKm !== null ? `${details.perigeeKm.toFixed(1)} km` : 'unknown';
+	const period =
+		details.periodMinutes !== null ? `${details.periodMinutes.toFixed(2)} min` : 'unknown';
+	const inclination =
+		details.inclinationDeg !== null ? `${details.inclinationDeg.toFixed(3)}°` : 'unknown';
+
+	const parts = [
+		`Selected object: ${details.objectName} (${details.noradCatId}).`,
+		`Orbit profile: class ${details.orbitClass}, apogee ${apogee}, perigee ${perigee}, period ${period}, inclination ${inclination}.`
+	];
+
+	if (details.orbitClass === 'GEO') {
+		parts.push(
+			'This orbit is high because geostationary missions trade launch cost for constant Earth coverage and near-fixed ground position.'
+		);
+	} else if (details.orbitClass === 'HEO') {
+		parts.push(
+			'This orbit is high because highly elliptical/high-earth trajectories prioritize long dwell times, transfer geometry, or special mission coverage.'
+		);
+	} else if (details.orbitClass === 'MEO') {
+		parts.push(
+			'This orbit is higher than LEO because MEO missions prioritize wide-area coverage and longer orbital periods (e.g., navigation constellations).'
+		);
+	} else {
+		parts.push(
+			'Even in LEO, altitude is a drag/lifetime tradeoff: higher means less drag and fewer reboosts, lower means easier access and lower radiation.'
+		);
 	}
 
-	if (/\bdebris\b/.test(latest)) {
-		filters.push({ field: 'object_type', op: 'eq', value: 'DEBRIS' });
-	}
-	if (/\bpayload|satellite(s)?\b/.test(latest)) {
-		filters.push({ field: 'object_type', op: 'eq', value: 'PAYLOAD' });
-	}
-	if (/\brocket body|rocket\b/.test(latest)) {
-		filters.push({ field: 'object_type', op: 'eq', value: 'ROCKET BODY' });
-	}
+	parts.push('No scene change was applied.');
+	return parts.join('\n');
+}
 
-	if (/\bgerman|germany|deutsch\b/.test(latest)) {
-		filters.push({ field: 'country_code', op: 'eq', value: 'germany' });
-	} else if (/\bamerican|united states|usa|u\.s\.| us\b/.test(latest)) {
-		filters.push({ field: 'country_code', op: 'eq', value: 'usa' });
-	} else if (/\bchinese|china\b/.test(latest)) {
-		filters.push({ field: 'country_code', op: 'eq', value: 'china' });
-	} else if (/\brussian|russia\b/.test(latest)) {
-		filters.push({ field: 'country_code', op: 'eq', value: 'RUS' });
-	}
+function coerceExecutableQuery({
+	kind,
+	latestUserMessage,
+	plannedQuery
+}: {
+	kind: 'count' | 'view_update';
+	latestUserMessage: string;
+	plannedQuery?: CatalogQuerySpec;
+}): CatalogQuerySpec {
+	const defaultMode = inferViewMode(latestUserMessage);
+	const expectedQueryType = kind === 'count' ? 'count' : 'select';
 
-	const beforeMatch = latest.match(/\b(before|pre)\s+(19|20)\d{2}\b/);
-	if (beforeMatch) {
-		const yearText = beforeMatch[0].match(/(19|20)\d{2}/)?.[0];
-		if (yearText) {
-			filters.push({ field: 'launch_year', op: 'lt', value: Number(yearText) });
-		}
-	}
-
-	const afterMatch = latest.match(/\b(after|since|post)\s+(19|20)\d{2}\b/);
-	if (afterMatch) {
-		const yearText = afterMatch[0].match(/(19|20)\d{2}/)?.[0];
-		if (yearText) {
-			filters.push({ field: 'launch_year', op: 'gt', value: Number(yearText) });
-		}
-	}
-
-	if (filters.length === 0) {
-		return null;
+	if (!plannedQuery || !Array.isArray(plannedQuery.filters)) {
+		return buildHeuristicQuery(latestUserMessage, expectedQueryType, defaultMode);
 	}
 
 	return {
-		queryType: 'count',
-		filters
+		queryType: expectedQueryType,
+		mode:
+			kind === 'view_update'
+				? plannedQuery.mode === 'add' || plannedQuery.mode === 'remove'
+					? plannedQuery.mode
+					: plannedQuery.mode === 'replace'
+						? 'replace'
+						: defaultMode
+				: 'replace',
+		limit:
+			kind === 'view_update'
+				? typeof plannedQuery.limit === 'number' && Number.isFinite(plannedQuery.limit)
+					? Math.floor(plannedQuery.limit)
+					: 2500
+				: undefined,
+		filters: plannedQuery.filters
 	};
-}
-
-function buildFallbackMessage(
-	intent: UserIntent,
-	lastQueryResult: CatalogQueryResult | null,
-	lastDetails: ObjectDetails | null
-): string {
-	if (intent === 'analytical' && lastQueryResult?.queryType === 'count') {
-		return `Query result: ${lastQueryResult.totalCount} matches (${lastQueryResult.filterSummary}). No scene change was applied.`;
-	}
-	if (intent === 'analytical' && lastDetails) {
-		const apogee = lastDetails.apogeeKm ?? 'unknown';
-		const perigee = lastDetails.perigeeKm ?? 'unknown';
-		return `Selected object ${lastDetails.objectName} (${lastDetails.noradCatId}) has apogee ${apogee} km and perigee ${perigee} km. No scene change was applied.`;
-	}
-	return 'I could not complete that request reliably. Please rephrase with either a filter request or a count question.';
 }
 
 export async function runAssist(body: AssistRequestBody): Promise<AssistResponse> {
 	const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 	const model = env.OPENAI_ASSIST_MODEL || 'gpt-5-mini';
 	const sceneContext = normalizeSceneContext(body.sceneContext);
-	const intent = inferUserIntent(body.messages);
 	const latestUserMessage = getLatestUserMessage(body.messages);
-	const analyticalKind = inferAnalyticalKind(latestUserMessage);
 
-	let previousResponseId = body.previousResponseId ?? null;
-	let input:
-		| EasyInputMessage[]
-		| Array<{ type: 'function_call_output'; call_id: string; output: string }> = buildInitialInput(
-		body.messages
-	);
-	let lastQueryResult: CatalogQueryResult | null = null;
-	let lastDetails: ObjectDetails | null = null;
-	let finalResponse: Response | null = null;
-	let usedHeuristicCountResult = false;
+	const planResult = await planAssistTurn({ openai, model, body });
+	const plan = planResult.plan;
 
-	for (let step = 0; step < MAX_TOOL_STEPS; step++) {
-		const requestArgs = {
-			model,
-			instructions:
-				SYSTEM_PROMPT +
-				`\nIntent: ${intent}.` +
-				`\nScene context: ${JSON.stringify(sceneContext)}.`,
-			input,
-			tools: ASSIST_TOOLS,
-			tool_choice: buildInitialToolChoice(
-				step,
-				intent,
-				analyticalKind,
-				sceneContext.selectedNoradId
-			),
-			previous_response_id: previousResponseId ?? undefined
-		};
-
-		let response: Response;
-		try {
-			response = await openai.responses.create(requestArgs);
-		} catch (error) {
-			if (previousResponseId && shouldRetryWithoutPreviousResponse(error)) {
-				previousResponseId = null;
-				response = await openai.responses.create({
-					...requestArgs,
-					previous_response_id: undefined
-				});
-			} else {
-				throw error;
-			}
-		}
-
-		finalResponse = response;
-		const toolCalls = extractToolCalls(response);
-		if (toolCalls.length === 0) {
-			break;
-		}
-
-		const toolOutputs: Array<{ type: 'function_call_output'; call_id: string; output: string }> =
-			[];
-
-		for (const call of toolCalls) {
-			if (call.name === 'scene_context') {
-				toolOutputs.push({
-					type: 'function_call_output',
-					call_id: call.call_id,
-					output: JSON.stringify(sceneContext)
-				});
-				continue;
-			}
-
-			if (call.name === 'execute_catalog_query') {
-				const parsed = parseJson(call.arguments);
-				try {
-					const queryResult = runCatalogQuery(parsed);
-					lastQueryResult = queryResult;
-					toolOutputs.push({
-						type: 'function_call_output',
-						call_id: call.call_id,
-						output: JSON.stringify(queryResult)
-					});
-				} catch (error) {
-					const message = error instanceof Error ? error.message : 'query failed';
-					toolOutputs.push({
-						type: 'function_call_output',
-						call_id: call.call_id,
-						output: JSON.stringify({ code: 'QUERY_ERROR', error: message })
-					});
-				}
-				continue;
-			}
-
-			if (call.name === 'get_object_details') {
-				const parsed = parseJson(call.arguments) as Record<string, unknown> | null;
-				const noradCandidate = parsed?.norad_cat_id;
-				try {
-					const noradId = Number(noradCandidate);
-					const details = getObjectDetails(noradId);
-					lastDetails = details;
-					toolOutputs.push({
-						type: 'function_call_output',
-						call_id: call.call_id,
-						output: JSON.stringify(details ?? { code: 'NOT_FOUND', norad_cat_id: noradId })
-					});
-				} catch (error) {
-					const message = error instanceof Error ? error.message : 'details lookup failed';
-					toolOutputs.push({
-						type: 'function_call_output',
-						call_id: call.call_id,
-						output: JSON.stringify({ code: 'DETAILS_ERROR', error: message })
-					});
-				}
-				continue;
-			}
-
-			toolOutputs.push({
-				type: 'function_call_output',
-				call_id: call.call_id,
-				output: JSON.stringify({ code: 'UNKNOWN_TOOL', name: call.name })
-			});
-		}
-
-		input = toolOutputs;
-		previousResponseId = response.id;
-	}
-
-	if (intent === 'analytical' && analyticalKind === 'count') {
-		const heuristicSpec = buildHeuristicCountSpec(latestUserMessage);
-		if (heuristicSpec) {
-			try {
-				const heuristicResult = runCatalogQuery(heuristicSpec);
-				if (!lastQueryResult || lastQueryResult.totalCount === 0) {
-					lastQueryResult = heuristicResult;
-					usedHeuristicCountResult = true;
-				}
-			} catch {
-				// Ignore heuristic fallback errors and continue to final fallback messaging.
-			}
-		}
-	}
-	if (
-		intent === 'analytical' &&
-		analyticalKind === 'explain' &&
-		!lastDetails &&
-		sceneContext.selectedNoradId !== null
-	) {
-		try {
-			lastDetails = getObjectDetails(sceneContext.selectedNoradId);
-		} catch {
-			// Ignore detail fallback errors and continue to final fallback messaging.
-		}
-	}
-
-	const baseMessage = (finalResponse?.output_text ?? '').trim();
-	const needsFallback =
-		usedHeuristicCountResult ||
-		baseMessage.length < 12 ||
-		/applied your request/i.test(baseMessage);
-	let assistantMessage = needsFallback
-		? buildFallbackMessage(intent, lastQueryResult, lastDetails)
-		: baseMessage;
-
-	if (
-		intent === 'analytical' &&
-		analyticalKind === 'count' &&
-		lastQueryResult?.queryType === 'count'
-	) {
-		assistantMessage = `Count: ${lastQueryResult.totalCount} objects match (${lastQueryResult.filterSummary}). No scene change was applied.`;
-	}
-
-	let action: AssistResponse['action'] = null;
-	if (intent === 'view_update' && lastQueryResult && lastQueryResult.queryType === 'select') {
-		action = {
-			mode: lastQueryResult.mode,
-			noradCatIds: lastQueryResult.noradCatIds,
-			totalCount: lastQueryResult.totalCount,
-			returnedCount: lastQueryResult.returnedCount,
-			filterSummary: lastQueryResult.filterSummary
+	if (plan.kind === 'clarify') {
+		return {
+			assistantMessage: plan.question ?? 'Could you clarify what you want me to filter or count?',
+			action: null,
+			responseId: planResult.responseId
 		};
 	}
-	if (intent === 'analytical' && !assistantMessage.includes('No scene change')) {
-		assistantMessage = `${assistantMessage}\nNo scene change was applied.`;
+
+	if (plan.kind === 'explain_selected') {
+		if (sceneContext.selectedNoradId === null) {
+			return {
+				assistantMessage:
+					'I do not see a selected object. Select a satellite in the scene (or provide a NORAD ID), and I can explain its orbit.\nNo scene change was applied.',
+				action: null,
+				responseId: planResult.responseId
+			};
+		}
+		const details = getObjectDetails(sceneContext.selectedNoradId);
+		if (!details) {
+			return {
+				assistantMessage:
+					'I could not find details for the selected object. Try selecting another satellite.\nNo scene change was applied.',
+				action: null,
+				responseId: planResult.responseId
+			};
+		}
+		return {
+			assistantMessage: buildExplainMessage(details),
+			action: null,
+			responseId: planResult.responseId
+		};
+	}
+
+	const executableQuery = coerceExecutableQuery({
+		kind: plan.kind,
+		latestUserMessage,
+		plannedQuery: plan.query
+	});
+
+	let queryResult: CatalogQueryResult;
+	try {
+		queryResult = runCatalogQuery(executableQuery);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : 'query failed';
+		return {
+			assistantMessage: `I could not execute that query (${message}). Please rephrase with concrete filters.\nNo scene change was applied.`,
+			action: null,
+			responseId: planResult.responseId
+		};
+	}
+
+	if (plan.kind === 'count') {
+		return {
+			assistantMessage: buildCountMessage(queryResult),
+			action: null,
+			responseId: planResult.responseId
+		};
 	}
 
 	return {
-		assistantMessage,
-		action,
-		responseId: finalResponse?.id ?? null
+		assistantMessage: buildViewUpdateMessage(queryResult),
+		action: {
+			mode: queryResult.mode,
+			noradCatIds: queryResult.noradCatIds,
+			totalCount: queryResult.totalCount,
+			returnedCount: queryResult.returnedCount,
+			filterSummary: queryResult.filterSummary
+		},
+		responseId: planResult.responseId
 	};
 }
