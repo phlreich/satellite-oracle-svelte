@@ -48,7 +48,6 @@
 	"dependencies": {
 		"better-sqlite3": "^12.4.1",
 		"node-schedule": "^2.1.1",
-		"node-sql-parser": "^5.3.13",
 		"openai": "^5.23.2",
 		"papaparse": "^5.5.3",
 		"satellite.js": "^5.0.0",

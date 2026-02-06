@@ -17,12 +17,7 @@ scheduleJob('38 1 * * *', async function () {
 
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX_REQUESTS = 60;
-const RATE_LIMIT_PATH_PREFIXES = [
-	'/api/assist',
-	'/api/query',
-	'/satellite-oracle/api/assist',
-	'/satellite-oracle/api/query'
-];
+const RATE_LIMIT_PATH_PREFIXES = ['/api/assist', '/satellite-oracle/api/assist'];
 const rateLimitStore = new Map<string, { count: number; windowStart: number }>();
 
 const isRateLimitedPath = (path: string) =>

@@ -12,14 +12,10 @@ import { promisify } from 'util';
 import { env } from '$env/dynamic/private';
 import { setCache } from './cache.js';
 import { createLogger, serializeError } from './logger';
-import pkg from 'node-sql-parser';
-const { Parser } = pkg;
 
 const DB_PATH = path.join(process.cwd(), 'src/data/satellite.db');
 const SCENE_DATA_PATH = path.join(process.cwd(), 'src/data/scene-data.json');
 const SCENE_DATA_GZIP_PATH = `${SCENE_DATA_PATH}.gz`;
-const MAX_QUERY_LENGTH = 2000;
-const ALLOWED_TABLES = new Set(['gp', 'satcat']);
 const gzipAsync = promisify(gzip);
 
 const db = new Database(DB_PATH);
@@ -179,11 +175,6 @@ interface SatelliteRow {
 	OBJECT_NAME: string;
 }
 
-type QueryError = {
-	code: string;
-	error_message: string;
-};
-
 export async function getSceneData(): Promise<Array<[string, string, string, number, string]>> {
 	const sql = `
 	SELECT gp.EPOCH, gp.TLE_LINE1, gp.TLE_LINE2, gp.NORAD_CAT_ID, satcat.OBJECT_NAME
@@ -223,116 +214,6 @@ async function writeSceneDataArtifacts(sceneData: Array<[string, string, string,
 		sceneDataGzipKb: Math.round(gzipBuffer.length / 1024)
 	});
 }
-
-export function runQuery(query: string): Record<string, unknown>[] | QueryError {
-	// parse to ensure only select statements are allowed
-	// a better solution might be a read-only user, but this is not supported by sqlite
-
-	const startedAt = Date.now();
-	dbLogger.info('ad-hoc query requested', {
-		queryLength: query.length,
-		preview: query.slice(0, 200)
-	});
-	const parser = new Parser();
-	try {
-		const normalizedQuery = query.trim().replace(/;$/, '');
-		if (normalizedQuery.length > MAX_QUERY_LENGTH) {
-			throw new Error(`Query too long (max ${MAX_QUERY_LENGTH} chars)`);
-		}
-
-		const ast = parser.astify(normalizedQuery); //, opt);
-		class CustomError extends Error {
-			code: string | undefined;
-		}
-
-		if (Array.isArray(ast)) {
-			throw new CustomError('Only a single statement is allowed, offending query:' + query);
-		} else if (ast.type && ast.type !== 'select') {
-			throw new CustomError('Only SELECT statements are allowed, offending query:' + query);
-		}
-
-		const selectAst = ast as {
-			with?: unknown;
-			set_op?: unknown;
-			union?: unknown;
-			from?: Array<{ table?: unknown; expr?: unknown }>;
-		};
-		if (selectAst.with || selectAst.set_op || selectAst.union) {
-			throw new CustomError('Only simple SELECT statements are allowed.');
-		}
-
-		if (!Array.isArray(selectAst.from) || selectAst.from.length === 0) {
-			throw new CustomError('Query must select from an allowed table.');
-		}
-
-		for (const fromItem of selectAst.from) {
-			const tableName = typeof fromItem.table === 'string' ? fromItem.table.toLowerCase() : '';
-			if (!tableName || !ALLOWED_TABLES.has(tableName)) {
-				throw new CustomError('Only gp and satcat tables are allowed.');
-			}
-			if (fromItem.expr) {
-				throw new CustomError('Subqueries are not allowed.');
-			}
-		}
-
-		const stmnt = db.prepare(normalizedQuery);
-		const result = stmnt.all() as Record<string, unknown>[];
-
-		// Check if the result set is empty
-		if (result.length === 0) {
-			const e = new CustomError('Query executed successfully but returned no rows.');
-			e.code = 'NO_ROWS';
-			throw e;
-		}
-		dbLogger.info('ad-hoc query completed', {
-			rowCount: result.length,
-			durationMs: Date.now() - startedAt
-		});
-
-		return result;
-	} catch (err) {
-		dbLogger.warn('ad-hoc query failed', {
-			durationMs: Date.now() - startedAt,
-			error: serializeError(err)
-		});
-
-		// Determine the error code based on the properties of the error object
-		const typedError =
-			typeof err === 'object' && err !== null
-				? (err as { code?: string; name?: string; message?: string })
-				: {};
-		const errorCode = typedError.code ?? typedError.name ?? 'Error';
-
-		const detailedErrorMessage = {
-			code: errorCode,
-			error_message: typedError.message ?? 'Unknown error'
-		};
-
-		return detailedErrorMessage;
-	}
-}
-
-/* export function queryToIndicesQuery(query: string): string {
-	try {
-		const parser = new Parser();
-		const opt = {
-			database: 'sqlite'
-		};
-		const queryAST = parser.astify(query, opt);
-
-		const indicesQueryTemplate =
-			'SELECT `rownum` FROM (SELECT ROW_NUMBER() OVER (ORDER BY `NORAD_CAT_ID` ASC) AS `rownum`, * FROM `gp`) AS `subquery` WHERE `APOAPSIS` < 1000000';
-		let indicesAST = parser.astify(indicesQueryTemplate, opt);
-
-		indicesAST[0].where = queryAST.where;
-		const indicesQuery = parser.sqlify(indicesAST, opt);
-		console.log('indicesquery', indicesQuery);
-		return indicesQuery;
-	} catch (err) {
-		console.error(err);
-		return '';
-	}
-} */
 
 // SERVER MAINTANENCE FUNCTIONS
 
