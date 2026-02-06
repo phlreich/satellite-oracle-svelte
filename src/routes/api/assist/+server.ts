@@ -86,8 +86,9 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
 		const result = await runAssist(body, { requestId });
 		logger.info('assist request completed', {
 			hasAction: result.action !== null,
-			actionMode: result.action?.mode ?? null,
-			returnedCount: result.action?.returnedCount ?? null
+			visibilityMode: result.action?.visibility?.mode ?? null,
+			visibilityCount: result.action?.visibility?.returnedCount ?? null,
+			focusTarget: result.action?.focus?.target ?? null
 		});
 		return json(result);
 	} catch (error) {

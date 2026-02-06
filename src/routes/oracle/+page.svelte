@@ -90,6 +90,8 @@
 	let focusPreviousVisibleSatellite = () => {};
 	let focusNextVisibleSatellite = () => {};
 	let getVisibleCount = () => 0;
+	let focusEarth = () => false;
+	let focusVisibleNoradId = (_noradCatId: number) => false;
 
 	type Message = {
 		role: 'user' | 'assistant';
@@ -101,11 +103,19 @@
 	type AssistResponseBody = {
 		assistantMessage: string;
 		action: {
-			mode: 'replace' | 'add' | 'remove';
-			noradCatIds: number[];
-			totalCount: number;
-			returnedCount: number;
-			filterSummary: string;
+			visibility?: {
+				mode: 'replace' | 'add' | 'remove';
+				noradCatIds: number[];
+				returnedCount: number;
+			};
+			focus?:
+				| {
+						target: 'earth';
+				  }
+				| {
+						target: 'norad';
+						noradCatId: number;
+				  };
 		} | null;
 	};
 
@@ -163,6 +173,8 @@
 				focusPreviousVisibleSatellite = sceneController.focusPreviousVisibleSatellite;
 				focusNextVisibleSatellite = sceneController.focusNextVisibleSatellite;
 				getVisibleCount = sceneController.getVisibleCount;
+				focusEarth = sceneController.focusEarth;
+				focusVisibleNoradId = sceneController.focusVisibleNoradId;
 			} catch (error) {
 				console.error('Error initializing scene:', error);
 			} finally {
@@ -221,7 +233,15 @@
 					messages: history,
 					sceneContext: {
 						selectedNoradId: $selectedSatellite?.noradCatId ?? null,
-						visibleCount: getVisibleCount()
+						visibleCount: getVisibleCount(),
+						selectedInfoPanel: $selectedSatellite
+							? [
+									`name=${$selectedSatellite.name}`,
+									`details=${String($selectedSatellite.details ?? '')}`,
+									`latitude=${formatCoordinate($selectedSatellite.latitude)}`,
+									`longitude=${formatCoordinate($selectedSatellite.longitude)}`
+								].join('; ')
+							: 'none'
 					}
 				})
 			});
@@ -262,9 +282,16 @@
 			return;
 		}
 
-		if (result.action) {
-			const rows = result.action.noradCatIds.map((id) => ({ NORAD_CAT_ID: id }));
-			sharedData.set([rows, result.action.mode]);
+		if (result.action?.visibility) {
+			const rows = result.action.visibility.noradCatIds.map((id) => ({ NORAD_CAT_ID: id }));
+			sharedData.set([rows, result.action.visibility.mode]);
+		}
+		if (result.action?.focus) {
+			if (result.action.focus.target === 'earth') {
+				focusEarth();
+			} else {
+				focusVisibleNoradId(result.action.focus.noradCatId);
+			}
 		}
 
 		chatHistory.update((history) => {

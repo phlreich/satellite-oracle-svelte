@@ -29,6 +29,8 @@ type SceneController = {
 	focusPreviousVisibleSatellite: () => void;
 	focusNextVisibleSatellite: () => void;
 	getVisibleCount: () => number;
+	focusEarth: () => boolean;
+	focusVisibleNoradId: (noradCatId: number) => boolean;
 };
 
 const scene = new THREE.Scene();
@@ -571,6 +573,34 @@ export const createScene = async (
 		drawOrbit(index);
 	}
 
+	function focusEarth() {
+		trackTarget = undefined;
+		previousSatellitePosition = undefined;
+		clearSelectedSatelliteHighlight();
+		stopOrbitTracking();
+		lerpTarget = { type: 'body', indeces: undefined, position: new THREE.Vector3(0, 0, 0) };
+		selectedSatellite.set({
+			name: 'Earth',
+			details: ''
+		});
+		return true;
+	}
+
+	function focusVisibleNoradId(noradCatId: number) {
+		if (!Number.isInteger(noradCatId) || noradCatId <= 0) {
+			return false;
+		}
+		const index = satelliteData.findIndex(
+			(satellite, satelliteIndex) =>
+				satellite.norad_cat_id === noradCatId && visibility[satelliteIndex] > 0
+		);
+		if (index === -1) {
+			return false;
+		}
+		selectSatellite(index);
+		return true;
+	}
+
 	function selectRelativeVisibleSatellite(step: -1 | 1) {
 		if (activeVisibleIndices.length === 0) {
 			return;
@@ -794,7 +824,9 @@ export const createScene = async (
 		},
 		focusPreviousVisibleSatellite: () => selectRelativeVisibleSatellite(-1),
 		focusNextVisibleSatellite: () => selectRelativeVisibleSatellite(1),
-		getVisibleCount: () => activeVisibleIndices.length
+		getVisibleCount: () => activeVisibleIndices.length,
+		focusEarth,
+		focusVisibleNoradId
 	};
 };
 
