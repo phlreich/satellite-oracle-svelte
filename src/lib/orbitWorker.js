@@ -3,35 +3,70 @@
 // orbitWorker.js
 import { propagate } from 'satellite.js';
 
-let satelliteData, satellites;
+let satelliteData;
 
 onmessage = function (event) {
 	if (event.data.type === 'init') {
-		// Store the constant data when the worker is initialized
 		satelliteData = event.data.satelliteData;
-		satellites = event.data.satellites;
 	} else if (event.data.type === 'process') {
 		const satelliteIndex = event.data.satelliteIndex;
-		const orbitPoints = calculateOrbitPoints(satelliteIndex);
-		postMessage(orbitPoints);
+		const requestId = Number(event.data.requestId) || 0;
+		const startTimeMs = Number(event.data.startTimeMs) || Date.now();
+		const sampleCount = Math.max(24, Number(event.data.sampleCount) || 360);
+		const closeLoop = Boolean(event.data.closeLoop);
+		const centerAroundStartTime = Boolean(event.data.centerAroundStartTime);
+		const orbitPoints = calculateOrbitPoints({
+			satelliteIndex,
+			startTimeMs,
+			sampleCount,
+			closeLoop,
+			centerAroundStartTime
+		});
+		postMessage({
+			type: 'orbit-points',
+			requestId,
+			satelliteIndex,
+			points: orbitPoints
+		});
 	}
 };
 
-function calculateOrbitPoints(satelliteIndex) {
-	// Calculate the orbit points for the satellite in steps of 1% of the orbital period
-	// TODO: This is a bit of a hack, but it works for now.  Need to find a better way to do this.
-	// It means that highly eccentric orbits will have a lower resolution than circular orbits.
+function calculateOrbitPoints({
+	satelliteIndex,
+	startTimeMs,
+	sampleCount,
+	closeLoop,
+	centerAroundStartTime
+}) {
 	const points = [];
-	const now = new Date().getTime();
-	const tenMinutesAgo = now - 10 * 60 * 1000;
-	const revolutionsPerDay = parseFloat(satellites[satelliteIndex][2].slice(52, 63));
-	const minutesPerDay = 1440;
-	const minutesPerRevolution = minutesPerDay / revolutionsPerDay;
-	const timeStep = minutesPerRevolution / 200;
-	for (let i = 0; i < 201; i++) {
-		const propagationTime = new Date(tenMinutesAgo + i * timeStep * 60 * 1000);
-		const positionAndVelocity = propagate(satelliteData[satelliteIndex].satrec, propagationTime);
-		points.push(positionAndVelocity.position);
+	const satrec = satelliteData?.[satelliteIndex]?.satrec;
+	if (!satrec) {
+		return points;
+	}
+	const meanMotionRadPerMinute = Number(satrec?.no);
+	const defaultPeriodMinutes = 90;
+	const orbitalPeriodMinutes =
+		Number.isFinite(meanMotionRadPerMinute) && meanMotionRadPerMinute > 0
+			? (2 * Math.PI) / meanMotionRadPerMinute
+			: defaultPeriodMinutes;
+	const orbitalPeriodMs = orbitalPeriodMinutes * 60 * 1000;
+	const effectiveStartTimeMs = centerAroundStartTime
+		? startTimeMs - orbitalPeriodMs / 2
+		: startTimeMs;
+
+	for (let i = 0; i < sampleCount; i++) {
+		const t = effectiveStartTimeMs + (i / sampleCount) * orbitalPeriodMs;
+		const propagationTime = new Date(t);
+		const positionAndVelocity = propagate(satrec, propagationTime);
+		const position = positionAndVelocity.position;
+		if (position && typeof position === 'object') {
+			points.push(position);
+		}
+	}
+
+	if (closeLoop && points.length > 0) {
+		const firstPoint = points[0];
+		points.push({ x: firstPoint.x, y: firstPoint.y, z: firstPoint.z });
 	}
 
 	return points;

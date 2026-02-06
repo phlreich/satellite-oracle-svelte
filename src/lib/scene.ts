@@ -8,6 +8,13 @@ import { base } from '$app/paths';
 type SceneDataRow = [string, string, string, number, string];
 type QueryResultRow = { NORAD_CAT_ID: number };
 type SharedSceneData = [QueryResultRow[], 'show_objects' | 'draw_orbits'] | [];
+type OrbitWorkerPoint = { x: number; y: number; z: number };
+type OrbitWorkerResponse = {
+	type: 'orbit-points';
+	requestId: number;
+	satelliteIndex: number;
+	points: OrbitWorkerPoint[];
+};
 type SelectedSatelliteState = {
 	name: string;
 	details: object | string;
@@ -154,9 +161,17 @@ export const createScene = async (
 
 	// initialize satellite positions
 	const N = satellites.length;
-	const sharedBufferPositions = new SharedArrayBuffer(N * 3 * Float32Array.BYTES_PER_ELEMENT);
+	const sharedBufferTargetPositions = new SharedArrayBuffer(N * 3 * Float32Array.BYTES_PER_ELEMENT);
+	const sharedBufferTargetVelocities = new SharedArrayBuffer(
+		N * 3 * Float32Array.BYTES_PER_ELEMENT
+	);
+	const sharedBufferUpdateTimes = new SharedArrayBuffer(N * Float64Array.BYTES_PER_ELEMENT);
 	const sharedBuffervisibility = new SharedArrayBuffer(N * 1 * Uint8Array.BYTES_PER_ELEMENT);
-	const satellitepositions = new Float32Array(sharedBufferPositions);
+	const satelliteTargetPositions = new Float32Array(sharedBufferTargetPositions);
+	const satelliteTargetVelocities = new Float32Array(sharedBufferTargetVelocities);
+	const satelliteUpdateTimes = new Float64Array(sharedBufferUpdateTimes);
+	const satelliteRenderPositions = new Float32Array(N * 3);
+	let activeVisibleIndices: number[] = [];
 	const visibility = new Uint8Array(sharedBuffervisibility);
 
 	const colors = new Float32Array(N * 3); // three components per color
@@ -188,7 +203,110 @@ export const createScene = async (
 
 	const orbitWorker = new Worker(new URL('./orbitWorker.js', import.meta.url), { type: 'module' });
 
-	orbitWorker.postMessage({ type: 'init', satelliteData, satellites });
+	orbitWorker.postMessage({ type: 'init', satelliteData });
+
+	const orbitSampleCount = 720;
+	const orbitRefreshIntervalMs = 1000;
+	let activeOrbitSatelliteIndex: number | undefined;
+	let latestOrbitRequestId = 0;
+	let orbitRefreshIntervalId: number | undefined;
+	let orbitLine: THREE.Line | undefined;
+
+	function disposeOrbitLine() {
+		if (!orbitLine) {
+			return;
+		}
+		scene.remove(orbitLine);
+		orbitLine.geometry.dispose();
+		(orbitLine.material as THREE.Material).dispose();
+		orbitLine = undefined;
+	}
+
+	function requestOrbitUpdate() {
+		if (activeOrbitSatelliteIndex === undefined) {
+			return;
+		}
+		latestOrbitRequestId += 1;
+		orbitWorker.postMessage({
+			type: 'process',
+			satelliteIndex: activeOrbitSatelliteIndex,
+			requestId: latestOrbitRequestId,
+			startTimeMs: Date.now(),
+			sampleCount: orbitSampleCount,
+			closeLoop: true,
+			centerAroundStartTime: true
+		});
+	}
+
+	function startOrbitTracking(satelliteIndex: number) {
+		activeOrbitSatelliteIndex = satelliteIndex;
+		disposeOrbitLine();
+		requestOrbitUpdate();
+		if (orbitRefreshIntervalId !== undefined) {
+			window.clearInterval(orbitRefreshIntervalId);
+		}
+		orbitRefreshIntervalId = window.setInterval(requestOrbitUpdate, orbitRefreshIntervalMs);
+	}
+
+	function stopOrbitTracking() {
+		activeOrbitSatelliteIndex = undefined;
+		latestOrbitRequestId += 1;
+		if (orbitRefreshIntervalId !== undefined) {
+			window.clearInterval(orbitRefreshIntervalId);
+			orbitRefreshIntervalId = undefined;
+		}
+		disposeOrbitLine();
+	}
+
+	orbitWorker.onmessage = (event: MessageEvent<OrbitWorkerResponse>) => {
+		const data = event.data;
+		if (!data || data.type !== 'orbit-points') {
+			return;
+		}
+		if (data.requestId !== latestOrbitRequestId) {
+			return;
+		}
+		if (data.satelliteIndex !== activeOrbitSatelliteIndex) {
+			return;
+		}
+		const orbitPoints = data.points.map((point) => new THREE.Vector3(point.y, point.z, point.x));
+		if (orbitPoints.length < 2) {
+			return;
+		}
+		disposeOrbitLine();
+		const orbitGeometry = new THREE.BufferGeometry().setFromPoints(orbitPoints);
+		const orbitMaterial = new THREE.LineBasicMaterial({
+			color: 0x90ee90,
+			opacity: 0.95,
+			transparent: true
+		});
+		orbitMaterial.depthWrite = false;
+		orbitMaterial.depthTest = true;
+		const newOrbitLine = new THREE.Line(orbitGeometry, orbitMaterial);
+		newOrbitLine.name = 'orbitLine';
+		newOrbitLine.renderOrder = 1;
+		scene.add(newOrbitLine);
+		orbitLine = newOrbitLine;
+	};
+
+	const extrapolateFromVelocity = (nowMs: number) => {
+		const maxExtrapolationSeconds = (workerUpdateIntervalMs * 2) / 1000;
+		for (let i = 0; i < activeVisibleIndices.length; i++) {
+			const index = activeVisibleIndices[i] * 3;
+			const updateTimeMs = satelliteUpdateTimes[activeVisibleIndices[i]];
+			let deltaSeconds = 0;
+			if (updateTimeMs > 0) {
+				deltaSeconds = Math.max(0, (nowMs - updateTimeMs) / 1000);
+				deltaSeconds = Math.min(deltaSeconds, maxExtrapolationSeconds);
+			}
+			satelliteRenderPositions[index] =
+				satelliteTargetPositions[index] + satelliteTargetVelocities[index] * deltaSeconds;
+			satelliteRenderPositions[index + 1] =
+				satelliteTargetPositions[index + 1] + satelliteTargetVelocities[index + 1] * deltaSeconds;
+			satelliteRenderPositions[index + 2] =
+				satelliteTargetPositions[index + 2] + satelliteTargetVelocities[index + 2] * deltaSeconds;
+		}
+	};
 
 	const assignVisibleIndices = () => {
 		const visibleIndices: number[] = [];
@@ -197,6 +315,7 @@ export const createScene = async (
 				visibleIndices.push(i);
 			}
 		}
+		activeVisibleIndices = visibleIndices;
 		const chunkSize = Math.ceil(visibleIndices.length / workerCount) || 1;
 		for (let workerIndex = 0; workerIndex < workerCount; workerIndex++) {
 			const start = workerIndex * chunkSize;
@@ -211,7 +330,9 @@ export const createScene = async (
 	satelliteWorkers.forEach((worker) => {
 		worker.postMessage({
 			type: 'init',
-			satellitepositions,
+			satellitepositions: satelliteTargetPositions,
+			satellitevelocities: satelliteTargetVelocities,
+			satelliteupdatetimes: satelliteUpdateTimes,
 			satelliteData,
 			visibility
 		});
@@ -235,7 +356,7 @@ export const createScene = async (
 	handleVisibilityChange();
 
 	const geometry = new THREE.BufferGeometry();
-	geometry.setAttribute('position', new THREE.BufferAttribute(satellitepositions, 3));
+	geometry.setAttribute('position', new THREE.BufferAttribute(satelliteRenderPositions, 3));
 	geometry.setAttribute('customColor', new THREE.BufferAttribute(colors, 3));
 	geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
 	geometry.setAttribute('visibility', new THREE.BufferAttribute(visibility, 1));
@@ -244,27 +365,19 @@ export const createScene = async (
 	scene.add(points);
 
 	function drawOrbit(satelliteIndex: number) {
-		deleteOrbits();
-		orbitWorker.postMessage({ type: 'process', satelliteIndex });
-		orbitWorker.onmessage = (event) => {
-			const orbitPoints = event.data.map(
-				(point: { x: number; y: number; z: number }) => new THREE.Vector3(point.y, point.z, point.x)
-			);
-			const geometry = new THREE.BufferGeometry().setFromPoints(orbitPoints);
-			const material = new THREE.LineBasicMaterial({ color: 0x90ee90 });
-			material.depthWrite = false;
-			const orbit = new THREE.Line(geometry, material);
-			orbit.renderOrder = 1;
-			scene.add(orbit);
-		};
+		startOrbitTracking(satelliteIndex);
 	}
 
-	function drawVerticalLine(satelliteIndex: number) {
+	function removeVerticalLine() {
 		scene.children.forEach((child) => {
 			if (child.type === 'Line' && child.name === 'verticalLine') {
 				scene.remove(child);
 			}
 		});
+	}
+
+	function drawVerticalLine(satelliteIndex: number) {
+		removeVerticalLine();
 		if (!visibility[satelliteIndex]) {
 			return;
 		}
@@ -272,9 +385,9 @@ export const createScene = async (
 		material.depthWrite = false;
 		const points: THREE.Vector3[] = [];
 		const satelliteVector = new THREE.Vector3(
-			satellitepositions[satelliteIndex * 3],
-			satellitepositions[satelliteIndex * 3 + 1],
-			satellitepositions[satelliteIndex * 3 + 2]
+			satelliteRenderPositions[satelliteIndex * 3],
+			satelliteRenderPositions[satelliteIndex * 3 + 1],
+			satelliteRenderPositions[satelliteIndex * 3 + 2]
 		);
 		const surfacePoint = satelliteVector
 			.clone()
@@ -333,6 +446,7 @@ export const createScene = async (
 		color.setXYZ(localSelectedSatellite, 1.0, 1.0, 1.0);
 		color.needsUpdate = true;
 		localSelectedSatellite = undefined;
+		removeVerticalLine();
 	}
 
 	function clearHoveredSatelliteHighlight() {
@@ -488,22 +602,11 @@ export const createScene = async (
 				const noradID = satelliteData[i].norad_cat_id;
 				if (selectedNoradIds.has(noradID)) {
 					visibility[i] = 1.0;
-					// console.log('drawing orbit for', noradID);
-					drawOrbit(i);
 				}
 			}
 		}
 		assignVisibleIndices();
-		deleteOrbits();
 	});
-
-	function deleteOrbits() {
-		scene.children.forEach((child) => {
-			if (child.type === 'Line') {
-				scene.remove(child);
-			}
-		});
-	}
 	// line to center
 	// const lineGeometry = new THREE.LineGeometry();
 
@@ -545,6 +648,7 @@ export const createScene = async (
 			// Apply GMST and the texture alignment offset
 			earthMesh.rotation.y = currentGmstRad + textureAlignmentOffsetRad; // Corrected logic
 
+			extrapolateFromVelocity(Date.now());
 			geometry.attributes.position.needsUpdate = true;
 			if (
 				mouseInsideScene &&
@@ -557,9 +661,9 @@ export const createScene = async (
 			if (lerpTarget && !trackTarget) {
 				if (lerpTarget.type === 'satellite' && lerpTarget.indeces) {
 					const lerpTargetVector = new THREE.Vector3(
-						satellitepositions[lerpTarget.indeces[0]],
-						satellitepositions[lerpTarget.indeces[1]],
-						satellitepositions[lerpTarget.indeces[2]]
+						satelliteRenderPositions[lerpTarget.indeces[0]],
+						satelliteRenderPositions[lerpTarget.indeces[1]],
+						satelliteRenderPositions[lerpTarget.indeces[2]]
 					);
 					lerpToTarget(lerpTargetVector);
 					if (controls.target.distanceTo(lerpTargetVector) < 1.5) {
@@ -576,9 +680,9 @@ export const createScene = async (
 				}
 			} else if (trackTarget) {
 				const trackTargetVector = new THREE.Vector3(
-					satellitepositions[trackTarget[0]],
-					satellitepositions[trackTarget[1]],
-					satellitepositions[trackTarget[2]]
+					satelliteRenderPositions[trackTarget[0]],
+					satelliteRenderPositions[trackTarget[1]],
+					satelliteRenderPositions[trackTarget[2]]
 				);
 				trackToTarget(trackTargetVector);
 			}
@@ -594,6 +698,7 @@ export const createScene = async (
 	resize();
 	// TODO find out why removing the following line breaks hovercolor and click
 	await new Promise((r) => setTimeout(r, 1000));
+	satelliteRenderPositions.set(satelliteTargetPositions);
 	animate();
 
 	window.addEventListener('mousemove', updateMouseCoordinates);
@@ -606,6 +711,7 @@ export const createScene = async (
 	return () => {
 		cancelAnimationFrame(animationFrameId); // Cancel the animation loop
 		satelliteWorkers.forEach((worker) => worker.terminate());
+		stopOrbitTracking();
 		orbitWorker.terminate();
 		document.removeEventListener('visibilitychange', handleVisibilityChange);
 		window.removeEventListener('resize', resize);

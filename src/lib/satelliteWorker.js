@@ -3,6 +3,10 @@ import { propagate } from 'satellite.js';
 
 /** @type {Float32Array | null} */
 let satellitepositions = null;
+/** @type {Float32Array | null} */
+let satellitevelocities = null;
+/** @type {Float64Array | null} */
+let satelliteupdatetimes = null;
 /** @type {Array<{ satrec: any }> | null} */
 let satelliteData = null;
 /** @type {Uint8Array | null} */
@@ -23,21 +27,38 @@ const runLoop = async () => {
 			continue;
 		}
 
-		if (!satellitepositions || !satelliteData || !visibility) {
+		if (
+			!satellitepositions ||
+			!satellitevelocities ||
+			!satelliteupdatetimes ||
+			!satelliteData ||
+			!visibility
+		) {
 			await sleep(50);
 			continue;
 		}
 
 		const currentTime = new Date();
+		const currentTimeMs = currentTime.getTime();
 		for (const i of indices) {
 			if (visibility[i] > 0) {
 				// we only need to update the positions of satellites that are visible
 				const positionAndVelocity = propagate(satelliteData[i].satrec, currentTime);
 				const position = positionAndVelocity.position;
-				if (typeof position === 'object' && position !== null) {
+				const velocity = positionAndVelocity.velocity;
+				if (
+					typeof position === 'object' &&
+					position !== null &&
+					typeof velocity === 'object' &&
+					velocity !== null
+				) {
 					satellitepositions[i * 3] = position['y'];
 					satellitepositions[i * 3 + 1] = position['z'];
 					satellitepositions[i * 3 + 2] = position['x'];
+					satellitevelocities[i * 3] = velocity['y'];
+					satellitevelocities[i * 3 + 1] = velocity['z'];
+					satellitevelocities[i * 3 + 2] = velocity['x'];
+					satelliteupdatetimes[i] = currentTimeMs;
 				}
 			}
 		}
@@ -48,6 +69,8 @@ const runLoop = async () => {
 onmessage = (event) => {
 	if (event.data?.type === 'init') {
 		satellitepositions = event.data.satellitepositions;
+		satellitevelocities = event.data.satellitevelocities;
+		satelliteupdatetimes = event.data.satelliteupdatetimes;
 		satelliteData = event.data.satelliteData;
 		visibility = event.data.visibility;
 		if (!isRunning) {
