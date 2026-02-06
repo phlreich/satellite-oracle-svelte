@@ -224,7 +224,7 @@ export function buildHeuristicQuery(
 	return {
 		queryType,
 		mode,
-		limit: queryType === 'select' ? 2500 : undefined,
+		limit: undefined,
 		filters
 	};
 }
@@ -307,7 +307,7 @@ export async function planAssistTurn({
 	model: string;
 	body: AssistRequestBody;
 	requestId?: string;
-}): Promise<{ plan: AssistPlan; responseId: string | null }> {
+}): Promise<AssistPlan> {
 	const logger = createLogger('assist.planner', {
 		requestId: requestId ?? 'unknown',
 		model
@@ -325,8 +325,6 @@ export async function planAssistTurn({
 	};
 	logger.info('planner request started', {
 		messageCount: input.length,
-		hasPreviousResponseId: Boolean(body.previousResponseId),
-		previousResponseIdIgnored: true,
 		selectedNoradId: normalizedContext.selectedNoradId
 	});
 
@@ -345,8 +343,5 @@ export async function planAssistTurn({
 		kind: plan.kind,
 		filterCount: plan.query?.filters.length ?? 0
 	});
-	return {
-		plan,
-		responseId: response.id ?? null
-	};
+	return plan;
 }

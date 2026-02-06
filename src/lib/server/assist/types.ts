@@ -17,7 +17,6 @@ export type SceneContext = {
 export type AssistRequestBody = {
 	messages: AssistMessage[];
 	sceneContext?: SceneContext;
-	previousResponseId?: string | null;
 };
 
 export type CatalogFilterField =
@@ -105,5 +104,4 @@ export type AssistResponse = {
 		returnedCount: number;
 		filterSummary: string;
 	} | null;
-	responseId: string | null;
 };

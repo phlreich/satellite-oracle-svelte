@@ -13,8 +13,6 @@ import type {
 
 const DB_PATH = path.join(process.cwd(), 'src/data/satellite.db');
 const MAX_FILTERS = 12;
-const MAX_LIMIT = 10000;
-const DEFAULT_LIMIT = 2500;
 
 const db = new Database(DB_PATH, { readonly: true, fileMustExist: true });
 db.pragma('busy_timeout = 5000');
@@ -623,17 +621,19 @@ export function runCatalogQuery(rawSpec: unknown): CatalogQueryResult {
 	const spec = rawSpec as Record<string, unknown>;
 	const queryType = spec.queryType === 'count' ? 'count' : 'select';
 	const mode = spec.mode === 'add' || spec.mode === 'remove' ? spec.mode : 'replace';
-	const limitRaw = Number(spec.limit ?? DEFAULT_LIMIT);
-	const limit = Math.max(
-		1,
-		Math.min(MAX_LIMIT, Number.isFinite(limitRaw) ? Math.floor(limitRaw) : DEFAULT_LIMIT)
-	);
+	const explicitLimit =
+		typeof spec.limit === 'number' && Number.isFinite(spec.limit)
+			? Math.floor(spec.limit)
+			: undefined;
+	if (explicitLimit !== undefined && explicitLimit < 1) {
+		throw new Error('limit must be a positive integer');
+	}
 	const filters = validateFilters(spec.filters ?? []);
 	queryLogger.debug('catalog query received', {
 		dataSource: SOURCE.source,
 		queryType,
 		mode,
-		limit,
+		limit: explicitLimit ?? null,
 		filterCount: filters.length
 	});
 
@@ -667,24 +667,27 @@ export function runCatalogQuery(rawSpec: unknown): CatalogQueryResult {
 	const objectNameNeedle = extractSingleObjectNameNeedle(filters);
 	let orderSql = `${SOURCE.noradOrderSql} ASC`;
 	let selectParams: Record<string, string | number> = { ...params };
-	let selectLimit = limit;
+	let selectLimit = explicitLimit;
 	if (objectNameNeedle) {
 		const relevanceOrder = buildObjectNameRelevanceOrder(objectNameNeedle);
 		orderSql = relevanceOrder.orderSql;
 		selectParams = { ...selectParams, ...relevanceOrder.params };
-		// Probe additional rows so the caller can see alternatives when limit is small.
-		selectLimit = Math.max(limit, 10);
+		if (explicitLimit !== undefined) {
+			// Probe additional rows so the caller can see alternatives when limit is small.
+			selectLimit = Math.max(explicitLimit, 10);
+		}
 	}
 
+	const limitClause = selectLimit === undefined ? '' : 'LIMIT @selectLimit';
 	const rows = db
 		.prepare(
 			`${SOURCE.selectSql}
-				${SOURCE.fromSql}
-				WHERE ${whereSql}
-				ORDER BY ${orderSql}
-				LIMIT @selectLimit`
+					${SOURCE.fromSql}
+					WHERE ${whereSql}
+					ORDER BY ${orderSql}
+					${limitClause}`
 		)
-		.all({ ...selectParams, selectLimit }) as Array<{
+		.all(selectLimit === undefined ? selectParams : { ...selectParams, selectLimit }) as Array<{
 		norad_cat_id: number;
 		object_name: string;
 		object_type: string;
@@ -699,7 +702,7 @@ export function runCatalogQuery(rawSpec: unknown): CatalogQueryResult {
 		rcs_size: string | null;
 	}>;
 
-	const selectedRows = rows.slice(0, limit);
+	const selectedRows = explicitLimit === undefined ? rows : rows.slice(0, explicitLimit);
 	const sampleRows = rows.slice(0, 10);
 	const sample = sampleRows.map((row) => ({
 		noradCatId: row.norad_cat_id,

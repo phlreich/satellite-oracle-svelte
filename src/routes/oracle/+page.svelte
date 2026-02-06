@@ -103,7 +103,6 @@
 	type SceneDataRow = [string, string, string, number, string];
 	type AssistResponseBody = {
 		assistantMessage: string;
-		responseId: string | null;
 		action: {
 			mode: 'replace' | 'add' | 'remove';
 			noradCatIds: number[];
@@ -114,11 +113,9 @@
 	};
 
 	const chatHistory = writable<Message[]>([]);
-	let previousResponseId: string | null = null;
 
 	function resetChat() {
 		chatHistory.set([]);
-		previousResponseId = null;
 	}
 
 	function getChatHistory() {
@@ -257,7 +254,6 @@
 				},
 				body: JSON.stringify({
 					messages: history,
-					previousResponseId,
 					sceneContext: {
 						selectedNoradId: $selectedSatellite?.noradCatId ?? null,
 						visibleNoradIds: getVisibleNoradIdsSample(250),
@@ -302,8 +298,6 @@
 			messageContainer.scrollTop = messageContainer.scrollHeight;
 			return;
 		}
-
-		previousResponseId = result.responseId;
 
 		if (result.action) {
 			const rows = result.action.noradCatIds.map((id) => ({ NORAD_CAT_ID: id }));

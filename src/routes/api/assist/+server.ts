@@ -31,11 +31,6 @@ function isValidBody(value: unknown): value is AssistRequestBody {
 			return false;
 		}
 	}
-	if (body.previousResponseId !== undefined && body.previousResponseId !== null) {
-		if (typeof body.previousResponseId !== 'string') {
-			return false;
-		}
-	}
 	if (body.sceneContext !== undefined && body.sceneContext !== null) {
 		if (typeof body.sceneContext !== 'object' || Array.isArray(body.sceneContext)) {
 			return false;
@@ -81,7 +76,6 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
 				?.content.slice(0, 180) ?? '';
 		logger.info('assist request accepted', {
 			messageCount: body.messages.length,
-			hasPreviousResponseId: Boolean(body.previousResponseId),
 			sceneSelectedNoradId:
 				typeof body.sceneContext?.selectedNoradId === 'number'
 					? body.sceneContext.selectedNoradId
@@ -91,7 +85,6 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
 
 		const result = await runAssist(body, { requestId });
 		logger.info('assist request completed', {
-			responseId: result.responseId,
 			hasAction: result.action !== null,
 			actionMode: result.action?.mode ?? null,
 			returnedCount: result.action?.returnedCount ?? null
@@ -102,8 +95,7 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
 		return json({
 			assistantMessage:
 				'The assistant ran into a backend error while processing that request. Please try again. No scene change was applied.',
-			action: null,
-			responseId: null
+			action: null
 		});
 	}
 };

@@ -117,24 +117,6 @@ describe('runAssist planner/executor behavior', () => {
 		expect(result.assistantMessage).toContain('No scene change was applied.');
 	});
 
-	it('ignores previous_response_id when invoking planner requests', async () => {
-		createMock.mockResolvedValueOnce(
-			plannerResponse('resp_plan_4', {
-				kind: 'clarify',
-				question: 'What would you like me to filter or count?'
-			})
-		);
-
-		const result = await runAssist({
-			messages: [{ role: 'user', content: 'hey there' }],
-			previousResponseId: 'resp_invalid'
-		});
-
-		expect(createMock).toHaveBeenCalledTimes(1);
-		expect(createMock.mock.calls[0][0].previous_response_id).toBeUndefined();
-		expect(result.assistantMessage).toContain('What would you like me to filter or count?');
-	});
-
 	it('blocks scene mutations for ambiguous single-target object-name matches', async () => {
 		createMock.mockResolvedValueOnce(
 			plannerResponse('resp_plan_5', {
@@ -177,5 +159,27 @@ describe('runAssist planner/executor behavior', () => {
 		expect(result.action).not.toBeNull();
 		expect(result.action?.returnedCount).toBe(1);
 		expect(result.assistantMessage).toContain('Interpreted your request as');
+	});
+
+	it('does not cap replace updates when planner omits limit', async () => {
+		createMock.mockResolvedValueOnce(
+			plannerResponse('resp_plan_7', {
+				kind: 'view_update',
+				query: {
+					queryType: 'select',
+					mode: 'replace',
+					filters: [{ field: 'object_name', op: 'contains', value: 'starlink' }]
+				}
+			})
+		);
+
+		const result = await runAssist({
+			messages: [{ role: 'user', content: 'show all starlink satellites' }],
+			sceneContext: { visibleNoradIds: [25544], visibleCount: 31865 }
+		});
+
+		expect(result.action).not.toBeNull();
+		expect(result.action?.returnedCount).toBeGreaterThan(2500);
+		expect(result.action?.returnedCount).toBe(result.action?.totalCount);
 	});
 });

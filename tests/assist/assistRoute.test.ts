@@ -31,7 +31,6 @@ describe('/api/assist route', () => {
 		expect(response.status).toBe(200);
 		const body = await response.json();
 		expect(body.action).toBeNull();
-		expect(body.responseId).toBeNull();
 		expect(body.assistantMessage).toContain('backend error');
 	});
 

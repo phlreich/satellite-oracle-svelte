@@ -219,11 +219,20 @@ function buildAmbiguousSingleTargetMessage(result: CatalogQueryResult): string {
 	return lines.join('\n');
 }
 
-function inferSelectLimit(latestUserMessage: string, plannedLimit: unknown): number {
+function inferSelectLimit({
+	latestUserMessage,
+	plannedLimit
+}: {
+	latestUserMessage: string;
+	plannedLimit: unknown;
+}): number | undefined {
 	if (typeof plannedLimit === 'number' && Number.isFinite(plannedLimit)) {
 		return Math.max(1, Math.floor(plannedLimit));
 	}
-	return messageSuggestsSingleTarget(latestUserMessage) ? 1 : 2500;
+	if (messageSuggestsSingleTarget(latestUserMessage)) {
+		return 1;
+	}
+	return undefined;
 }
 
 function coerceExecutableQuery({
@@ -237,23 +246,37 @@ function coerceExecutableQuery({
 }): CatalogQuerySpec {
 	const defaultMode = inferViewMode(latestUserMessage);
 	const expectedQueryType = kind === 'count' ? 'count' : 'select';
+	const plannedMode =
+		kind === 'view_update'
+			? plannedQuery?.mode === 'add' || plannedQuery?.mode === 'remove'
+				? plannedQuery.mode
+				: plannedQuery?.mode === 'replace'
+					? 'replace'
+					: defaultMode
+			: 'replace';
+	const resolvedLimit =
+		kind === 'view_update'
+			? inferSelectLimit({
+					latestUserMessage,
+					plannedLimit: plannedQuery?.limit
+				})
+			: undefined;
 
 	if (!plannedQuery || !Array.isArray(plannedQuery.filters)) {
-		return buildHeuristicQuery(latestUserMessage, expectedQueryType, defaultMode);
+		const heuristic = buildHeuristicQuery(latestUserMessage, expectedQueryType, defaultMode);
+		return kind === 'view_update'
+			? {
+					...heuristic,
+					mode: plannedMode,
+					limit: resolvedLimit
+				}
+			: heuristic;
 	}
 
 	return {
 		queryType: expectedQueryType,
-		mode:
-			kind === 'view_update'
-				? plannedQuery.mode === 'add' || plannedQuery.mode === 'remove'
-					? plannedQuery.mode
-					: plannedQuery.mode === 'replace'
-						? 'replace'
-						: defaultMode
-				: 'replace',
-		limit:
-			kind === 'view_update' ? inferSelectLimit(latestUserMessage, plannedQuery.limit) : undefined,
+		mode: plannedMode,
+		limit: resolvedLimit,
 		filters: plannedQuery.filters
 	};
 }
@@ -272,18 +295,16 @@ export async function runAssist(
 	});
 	logger.info('assist execution started', {
 		messageCount: body.messages.length,
-		hasPreviousResponseId: Boolean(body.previousResponseId),
 		selectedNoradId: sceneContext.selectedNoradId,
 		visibleCount: sceneContext.visibleCount
 	});
 
-	const planResult = await planAssistTurn({
+	const plan = await planAssistTurn({
 		openai,
 		model,
 		body,
 		requestId: options?.requestId
 	});
-	const plan = planResult.plan;
 	logger.info('assist plan received', {
 		kind: plan.kind,
 		hasQuery: Boolean(plan.query),
@@ -294,8 +315,7 @@ export async function runAssist(
 		logger.info('assist execution finished with clarify response');
 		return {
 			assistantMessage: plan.question ?? 'Could you clarify what you want me to filter or count?',
-			action: null,
-			responseId: planResult.responseId
+			action: null
 		};
 	}
 
@@ -305,8 +325,7 @@ export async function runAssist(
 			return {
 				assistantMessage:
 					'I do not see a selected object. Select a satellite in the scene (or provide a NORAD ID), and I can explain its orbit.\nNo scene change was applied.',
-				action: null,
-				responseId: planResult.responseId
+				action: null
 			};
 		}
 		const details = getObjectDetails(sceneContext.selectedNoradId);
@@ -317,8 +336,7 @@ export async function runAssist(
 			return {
 				assistantMessage:
 					'I could not find details for the selected object. Try selecting another satellite.\nNo scene change was applied.',
-				action: null,
-				responseId: planResult.responseId
+				action: null
 			};
 		}
 		logger.info('assist explanation generated', {
@@ -327,8 +345,7 @@ export async function runAssist(
 		});
 		return {
 			assistantMessage: buildExplainMessage(details),
-			action: null,
-			responseId: planResult.responseId
+			action: null
 		};
 	}
 
@@ -356,8 +373,7 @@ export async function runAssist(
 		});
 		return {
 			assistantMessage: `I could not execute that query (${message}). Please rephrase with concrete filters.\nNo scene change was applied.`,
-			action: null,
-			responseId: planResult.responseId
+			action: null
 		};
 	}
 	logger.info('assist query execution succeeded', {
@@ -371,8 +387,7 @@ export async function runAssist(
 		logger.info('assist execution finished with analytical response');
 		return {
 			assistantMessage: buildCountMessage(queryResult),
-			action: null,
-			responseId: planResult.responseId
+			action: null
 		};
 	}
 
@@ -383,8 +398,7 @@ export async function runAssist(
 		return {
 			assistantMessage:
 				'I could not find a unique object for that single-target request.\nNo scene change was applied.',
-			action: null,
-			responseId: planResult.responseId
+			action: null
 		};
 	}
 	if (singleTargetExpected && queryResult.totalCount > 1) {
@@ -398,8 +412,7 @@ export async function runAssist(
 			});
 			return {
 				assistantMessage: buildAmbiguousSingleTargetMessage(queryResult),
-				action: null,
-				responseId: planResult.responseId
+				action: null
 			};
 		}
 		const selected = queryResult.sample.find(
@@ -430,7 +443,6 @@ export async function runAssist(
 			totalCount: queryResult.totalCount,
 			returnedCount: queryResult.returnedCount,
 			filterSummary: queryResult.filterSummary
-		},
-		responseId: planResult.responseId
+		}
 	};
 }
