@@ -12,6 +12,7 @@ import { promisify } from 'util';
 // @ts-ignore
 import { env } from '$env/dynamic/private';
 import { setCache } from './cache.js';
+import { createLogger, serializeError } from './logger';
 import pkg from 'node-sql-parser';
 const { Parser } = pkg;
 
@@ -24,8 +25,11 @@ const gzipAsync = promisify(gzip);
 
 const db = new Database(DB_PATH);
 //db.pragma('journal_mode = WAL');
+const dbLogger = createLogger('db.maintenance');
 
 export async function initializeDatabaseAndSetCache() {
+	const startTime = Date.now();
+	dbLogger.info('database initialization started');
 	try {
 		function checkTableExists(tableName: string): boolean {
 			const result = db
@@ -136,15 +140,15 @@ export async function initializeDatabaseAndSetCache() {
 			db.exec(createGpTable);
 			db.exec(createSatcatTable);
 
-			console.log('Tables created.');
+			dbLogger.info('database tables created');
 		}
 		// check if the CSVs are present
 		const csvs = ['gp', 'satcat', 'boxscore'];
 		if (!csvs.every((csv) => nfs.existsSync(`${process.cwd()}/src/data/${csv}.csv`))) {
-			console.log('CSVs not found. Downloading.');
+			dbLogger.info('source CSV files missing; downloading');
 			await updateCSVs(env.EMAIL, env.PASSWORD);
 		} else {
-			console.log('CSVs present. Skipping download.');
+			dbLogger.info('source CSV files present; skipping download');
 		}
 
 		await updateSatcat();
@@ -155,8 +159,15 @@ export async function initializeDatabaseAndSetCache() {
 		const sceneData = await getSceneData();
 		setCache(sceneData);
 		await writeSceneDataArtifacts(sceneData);
+		dbLogger.info('database initialization completed', {
+			durationMs: Date.now() - startTime,
+			sceneDataRows: sceneData.length
+		});
 	} catch (err) {
-		console.error('Error checking database tables:', err);
+		dbLogger.error('database initialization failed', {
+			durationMs: Date.now() - startTime,
+			error: serializeError(err)
+		});
 		// TODO implement error handling
 	}
 }
@@ -216,16 +227,23 @@ async function writeSceneDataArtifacts(sceneData: Array<[string, string, string,
 	await fs.writeFile(tmpSceneDataGzipPath, gzipBuffer);
 	await fs.rename(tmpSceneDataPath, SCENE_DATA_PATH);
 	await fs.rename(tmpSceneDataGzipPath, SCENE_DATA_GZIP_PATH);
-	console.log(
-		`Updated scene-data artifacts: ${SCENE_DATA_PATH} (${Math.round(json.length / 1024)} KB), ${SCENE_DATA_GZIP_PATH} (${Math.round(gzipBuffer.length / 1024)} KB)`
-	);
+	dbLogger.info('scene-data artifacts updated', {
+		sceneDataPath: SCENE_DATA_PATH,
+		sceneDataKb: Math.round(json.length / 1024),
+		sceneDataGzipPath: SCENE_DATA_GZIP_PATH,
+		sceneDataGzipKb: Math.round(gzipBuffer.length / 1024)
+	});
 }
 
 export function runQuery(query: string): Record<string, unknown>[] | QueryError {
 	// parse to ensure only select statements are allowed
 	// a better solution might be a read-only user, but this is not supported by sqlite
 
-	console.log('Running Query: ', query);
+	const startedAt = Date.now();
+	dbLogger.info('ad-hoc query requested', {
+		queryLength: query.length,
+		preview: query.slice(0, 200)
+	});
 	const parser = new Parser();
 	try {
 		const normalizedQuery = query.trim().replace(/;$/, '');
@@ -277,10 +295,17 @@ export function runQuery(query: string): Record<string, unknown>[] | QueryError 
 			e.code = 'NO_ROWS';
 			throw e;
 		}
+		dbLogger.info('ad-hoc query completed', {
+			rowCount: result.length,
+			durationMs: Date.now() - startedAt
+		});
 
 		return result;
 	} catch (err) {
-		console.log(err);
+		dbLogger.warn('ad-hoc query failed', {
+			durationMs: Date.now() - startedAt,
+			error: serializeError(err)
+		});
 
 		// Determine the error code based on the properties of the error object
 		const typedError =
@@ -323,8 +348,9 @@ export function runQuery(query: string): Record<string, unknown>[] | QueryError 
 // SERVER MAINTANENCE FUNCTIONS
 
 export async function updateSatcat() {
+	const startedAt = Date.now();
 	try {
-		console.log('Updating satcat database');
+		dbLogger.info('satcat update started');
 		const text = await fs.readFile(process.cwd() + '/src/data/satcat.csv', 'utf8');
 
 		const parseResult: ParseResult<{ [key: string]: string }> = Papa.parse(text, {
@@ -357,14 +383,22 @@ export async function updateSatcat() {
 		}
 
 		db.exec('COMMIT');
+		dbLogger.info('satcat update completed', {
+			rowCount: data.length,
+			durationMs: Date.now() - startedAt
+		});
 	} catch (err) {
-		console.error(err);
+		dbLogger.error('satcat update failed', {
+			durationMs: Date.now() - startedAt,
+			error: serializeError(err)
+		});
 		db.exec('ROLLBACK');
 	}
 }
 
 export async function updateGP() {
-	console.log('Attempting gp database update');
+	const startedAt = Date.now();
+	dbLogger.info('gp update started');
 	try {
 		const text = await fs.readFile(process.cwd() + '/src/data/gp.csv', 'utf8');
 		const parseResult: ParseResult<{ [key: string]: string }> = Papa.parse(text, {
@@ -393,16 +427,24 @@ export async function updateGP() {
 		}
 
 		db.exec('COMMIT'); // Commit transaction
+		dbLogger.info('gp update completed', {
+			rowCount: data.length,
+			durationMs: Date.now() - startedAt
+		});
 	} catch (err) {
-		console.error('Error updating gp database:', err);
+		dbLogger.error('gp update failed', {
+			durationMs: Date.now() - startedAt,
+			error: serializeError(err)
+		});
 		db.exec('ROLLBACK'); // Rollback in case of an error
 	}
 }
 
 export async function updateBoxscore() {
+	const startedAt = Date.now();
 	let transactionStarted = false;
 	try {
-		console.log('Updating boxscore database');
+		dbLogger.info('boxscore update started');
 		const text = await fs.readFile(process.cwd() + '/src/data/boxscore.csv', 'utf8');
 
 		const parseResult: ParseResult<{ [key: string]: string }> = Papa.parse(text, {
@@ -437,8 +479,15 @@ export async function updateBoxscore() {
 
 		db.exec('COMMIT');
 		transactionStarted = false;
+		dbLogger.info('boxscore update completed', {
+			rowCount: data.length,
+			durationMs: Date.now() - startedAt
+		});
 	} catch (err) {
-		console.error(err);
+		dbLogger.error('boxscore update failed', {
+			durationMs: Date.now() - startedAt,
+			error: serializeError(err)
+		});
 		if (transactionStarted) {
 			db.exec('ROLLBACK');
 		}
@@ -446,8 +495,9 @@ export async function updateBoxscore() {
 }
 
 export async function deleteUnusedRows() {
+	const startedAt = Date.now();
 	try {
-		console.log('Deleting unused rows');
+		dbLogger.info('deleting unused rows started');
 		db.exec('BEGIN');
 
 		// Delete rows from satcat that do not meet the criteria or don't have a corresponding row in gp
@@ -476,8 +526,14 @@ export async function deleteUnusedRows() {
         `);
 
 		db.exec('COMMIT');
+		dbLogger.info('deleting unused rows completed', {
+			durationMs: Date.now() - startedAt
+		});
 	} catch (err) {
-		console.error(err);
+		dbLogger.error('deleting unused rows failed', {
+			durationMs: Date.now() - startedAt,
+			error: serializeError(err)
+		});
 		db.exec('ROLLBACK');
 	}
 }
@@ -524,9 +580,10 @@ async function fetchSpaceTrackData(cookie: string, url: string): Promise<string>
 }
 
 export async function updateCSVs(username?: string, password?: string) {
+	const startedAt = Date.now();
 	try {
 		if (!username || !password) {
-			console.error('Missing EMAIL/PASSWORD; skipping CSV refresh.');
+			dbLogger.warn('missing credentials; skipping CSV refresh');
 			return;
 		}
 		const cookie = await getSpaceTrackCookie(username, password);
@@ -538,26 +595,34 @@ export async function updateCSVs(username?: string, password?: string) {
 				'https://www.space-track.org/basicspacedata/query/class/' + dataset + '/format/csv'
 			);
 			await fs.writeFile(`${process.cwd()}/src/data/${dataset}.csv`, data, 'utf8');
+			dbLogger.debug('dataset CSV refreshed', { dataset, bytes: data.length });
 		}
-		console.log('Updated CSVs');
+		dbLogger.info('CSV refresh completed', { durationMs: Date.now() - startedAt });
 	} catch (err) {
-		console.error('Error updating CSVs:', err);
+		dbLogger.error('CSV refresh failed', {
+			durationMs: Date.now() - startedAt,
+			error: serializeError(err)
+		});
 	}
 }
 
 export async function checkpoint() {
+	const startedAt = Date.now();
 	try {
-		console.log('Triggering database checkpoint');
+		dbLogger.info('database checkpoint started');
 		await db.pragma('wal_checkpoint(TRUNCATE)');
-		console.log('Checkpoint completed');
+		dbLogger.info('database checkpoint completed', { durationMs: Date.now() - startedAt });
 	} catch (err) {
-		console.error('Error during checkpoint:', err);
+		dbLogger.error('database checkpoint failed', {
+			durationMs: Date.now() - startedAt,
+			error: serializeError(err)
+		});
 	}
 }
 
 export async function refreshData() {
 	const startTime = new Date().getTime();
-	console.log('running database refresh node cron job at time: ', startTime);
+	dbLogger.info('scheduled database refresh started', { startTime });
 	await updateCSVs(env.EMAIL, env.PASSWORD);
 	await updateSatcat();
 	await updateBoxscore();
@@ -568,7 +633,10 @@ export async function refreshData() {
 	await writeSceneDataArtifacts(sceneData);
 	await checkpoint();
 	const endTime = new Date().getTime();
-	console.log('finished database refresh node cron job at time: ', endTime);
 	const timeTaken = (endTime - startTime) / 1000;
-	console.log('Time taken:', timeTaken, 'seconds');
+	dbLogger.info('scheduled database refresh completed', {
+		endTime,
+		durationSeconds: timeTaken,
+		sceneDataRows: sceneData.length
+	});
 }

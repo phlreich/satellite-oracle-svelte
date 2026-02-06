@@ -17,7 +17,6 @@ describe('/api/assist route', () => {
 
 	it('returns structured assistant fallback on backend errors', async () => {
 		runAssistMock.mockRejectedValueOnce(new Error('upstream failure'));
-		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
 		const response = await POST({
 			request: new Request('http://localhost/api/assist', {
@@ -34,8 +33,6 @@ describe('/api/assist route', () => {
 		expect(body.action).toBeNull();
 		expect(body.responseId).toBeNull();
 		expect(body.assistantMessage).toContain('backend error');
-		expect(consoleSpy).toHaveBeenCalledTimes(1);
-		consoleSpy.mockRestore();
 	});
 
 	it('rejects invalid payloads with HTTP 400', async () => {

@@ -69,4 +69,18 @@ describe('queryRuntime normalization', () => {
 		expect(Array.isArray(result.facets.orbitClass)).toBe(true);
 		expect(result.facets.orbitClass.length).toBeGreaterThan(0);
 	});
+
+	it('ranks object_name contains matches for single-target probes', () => {
+		const result = runCatalogQuery({
+			queryType: 'select',
+			limit: 1,
+			filters: [{ field: 'object_name', op: 'contains', value: 'iss' }]
+		});
+
+		expect(result.totalCount).toBeGreaterThan(1);
+		expect(result.returnedCount).toBe(1);
+		expect(result.sample.length).toBeGreaterThan(1);
+		expect(result.sample[0].objectName.toLowerCase().startsWith('iss')).toBe(true);
+		expect(result.noradCatIds[0]).toBe(result.sample[0].noradCatId);
+	});
 });

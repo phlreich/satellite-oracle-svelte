@@ -5,6 +5,7 @@ import type {
 	Response
 } from 'openai/resources/responses/responses';
 import type { AssistRequestBody, CatalogQuerySpec, SceneContext } from './types';
+import { createLogger, serializeError } from '$lib/server/logger';
 
 export type AssistPlanKind = 'count' | 'view_update' | 'explain_selected' | 'clarify';
 
@@ -86,25 +87,12 @@ Planning rules:
 - kind=view_update for show/hide/filter/add/remove requests.
 - kind=explain_selected for "this orbit"/selected-object explanation requests.
 - kind=clarify if the request is too ambiguous and you need one short follow-up question.
+- If the user asks for one specific object (for example "the ISS"), set query.limit to 1.
+- Prefer precise object filters over broad substring matches when a unique target is implied.
 - For kind=count, query.queryType must be "count".
 - For kind=view_update, query.queryType must be "select" and mode must be replace/add/remove.
 - Never invent results. Only plan actions.
 `;
-
-function shouldRetryWithoutPreviousResponse(error: unknown): boolean {
-	if (!error || typeof error !== 'object') {
-		return false;
-	}
-	const candidate = error as { message?: string; param?: string };
-	const message = (candidate.message ?? '').toLowerCase();
-	const param = (candidate.param ?? '').toLowerCase();
-	return (
-		param.includes('previous_response_id') ||
-		message.includes('previous_response_id') ||
-		message.includes('response id') ||
-		message.includes('not found')
-	);
-}
 
 function parseJson(text: string): unknown {
 	try {
@@ -312,12 +300,18 @@ function buildPlannerInput(messages: AssistRequestBody['messages']): EasyInputMe
 export async function planAssistTurn({
 	openai,
 	model,
-	body
+	body,
+	requestId
 }: {
 	openai: OpenAI;
 	model: string;
 	body: AssistRequestBody;
+	requestId?: string;
 }): Promise<{ plan: AssistPlan; responseId: string | null }> {
+	const logger = createLogger('assist.planner', {
+		requestId: requestId ?? 'unknown',
+		model
+	});
 	const normalizedContext = normalizeSceneContext(body.sceneContext);
 	const input = buildPlannerInput(body.messages);
 	let response: Response;
@@ -327,23 +321,32 @@ export async function planAssistTurn({
 		instructions: `${PLANNER_PROMPT}\nScene context: ${JSON.stringify(normalizedContext)}.`,
 		input,
 		tools: [PLANNER_TOOL],
-		tool_choice: { type: 'function' as const, name: 'propose_assist_plan' as const },
-		previous_response_id: body.previousResponseId ?? undefined
+		tool_choice: { type: 'function' as const, name: 'propose_assist_plan' as const }
 	};
+	logger.info('planner request started', {
+		messageCount: input.length,
+		hasPreviousResponseId: Boolean(body.previousResponseId),
+		previousResponseIdIgnored: true,
+		selectedNoradId: normalizedContext.selectedNoradId
+	});
 
 	try {
 		response = await openai.responses.create(requestArgs);
 	} catch (error) {
-		if (body.previousResponseId && shouldRetryWithoutPreviousResponse(error)) {
-			response = await openai.responses.create({ ...requestArgs, previous_response_id: undefined });
-		} else {
-			throw error;
-		}
+		logger.error('planner request failed', { error: serializeError(error) });
+		throw error;
 	}
 
 	const parsedPlan = normalizePlan(extractPlannedArguments(response));
+	const plan = parsedPlan ?? buildFallbackPlan(body.messages);
+	logger.info('planner request completed', {
+		responseId: response.id ?? null,
+		usedFallbackPlan: parsedPlan === null,
+		kind: plan.kind,
+		filterCount: plan.query?.filters.length ?? 0
+	});
 	return {
-		plan: parsedPlan ?? buildFallbackPlan(body.messages),
+		plan,
 		responseId: response.id ?? null
 	};
 }

@@ -117,28 +117,65 @@ describe('runAssist planner/executor behavior', () => {
 		expect(result.assistantMessage).toContain('No scene change was applied.');
 	});
 
-	it('retries planner request without previous_response_id on stale-thread errors', async () => {
-		createMock
-			.mockRejectedValueOnce(
-				Object.assign(new Error('Invalid previous_response_id'), {
-					param: 'previous_response_id'
-				})
-			)
-			.mockResolvedValueOnce(
-				plannerResponse('resp_plan_4', {
-					kind: 'clarify',
-					question: 'What would you like me to filter or count?'
-				})
-			);
+	it('ignores previous_response_id when invoking planner requests', async () => {
+		createMock.mockResolvedValueOnce(
+			plannerResponse('resp_plan_4', {
+				kind: 'clarify',
+				question: 'What would you like me to filter or count?'
+			})
+		);
 
 		const result = await runAssist({
 			messages: [{ role: 'user', content: 'hey there' }],
 			previousResponseId: 'resp_invalid'
 		});
 
-		expect(createMock).toHaveBeenCalledTimes(2);
-		expect(createMock.mock.calls[0][0].previous_response_id).toBe('resp_invalid');
-		expect(createMock.mock.calls[1][0].previous_response_id).toBeUndefined();
+		expect(createMock).toHaveBeenCalledTimes(1);
+		expect(createMock.mock.calls[0][0].previous_response_id).toBeUndefined();
 		expect(result.assistantMessage).toContain('What would you like me to filter or count?');
+	});
+
+	it('blocks scene mutations for ambiguous single-target object-name matches', async () => {
+		createMock.mockResolvedValueOnce(
+			plannerResponse('resp_plan_5', {
+				kind: 'view_update',
+				query: {
+					queryType: 'select',
+					mode: 'replace',
+					limit: 1,
+					filters: [{ field: 'object_name', op: 'contains', value: 'ume' }]
+				}
+			})
+		);
+
+		const result = await runAssist({
+			messages: [{ role: 'user', content: 'show me the ume object' }]
+		});
+
+		expect(result.action).toBeNull();
+		expect(result.assistantMessage).toContain('did not change the scene');
+		expect(result.assistantMessage).toContain('Closest matches:');
+	});
+
+	it('auto-disambiguates single-target matches when exactly one strong candidate exists', async () => {
+		createMock.mockResolvedValueOnce(
+			plannerResponse('resp_plan_6', {
+				kind: 'view_update',
+				query: {
+					queryType: 'select',
+					mode: 'replace',
+					limit: 1,
+					filters: [{ field: 'object_name', op: 'contains', value: 'iss' }]
+				}
+			})
+		);
+
+		const result = await runAssist({
+			messages: [{ role: 'user', content: 'show me the iss' }]
+		});
+
+		expect(result.action).not.toBeNull();
+		expect(result.action?.returnedCount).toBe(1);
+		expect(result.assistantMessage).toContain('Interpreted your request as');
 	});
 });

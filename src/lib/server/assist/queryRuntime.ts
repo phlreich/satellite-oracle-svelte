@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
 import path from 'path';
+import { createLogger } from '$lib/server/logger';
 import type {
 	CatalogFacetBucket,
 	CatalogFacets,
@@ -17,6 +18,7 @@ const DEFAULT_LIMIT = 2500;
 
 const db = new Database(DB_PATH, { readonly: true, fileMustExist: true });
 db.pragma('busy_timeout = 5000');
+const queryLogger = createLogger('assist.query-runtime');
 
 type DataSource = 'catalog_v2' | 'legacy';
 
@@ -191,6 +193,9 @@ function buildSourceConfig(): SourceConfig {
 }
 
 const SOURCE = buildSourceConfig();
+queryLogger.info('query runtime initialized', {
+	dataSource: SOURCE.source
+});
 
 const COUNTRY_ALIASES: Record<string, string[]> = {
 	german: ['GER'],
@@ -515,6 +520,51 @@ function buildWhere(filters: CatalogFilter[]) {
 	};
 }
 
+function extractSingleObjectNameNeedle(filters: CatalogFilter[]): string | null {
+	const candidates = filters.filter(
+		(filter): filter is CatalogFilter & { value: string } =>
+			filter.field === 'object_name' &&
+			filter.op === 'contains' &&
+			typeof filter.value === 'string' &&
+			filter.value.trim() !== ''
+	);
+	if (candidates.length !== 1) {
+		return null;
+	}
+	const normalized = candidates[0].value.trim().toLowerCase().replace(/\s+/g, ' ');
+	if (normalized.length < 2) {
+		return null;
+	}
+	return normalized;
+}
+
+function buildObjectNameRelevanceOrder(needle: string): {
+	orderSql: string;
+	params: Record<string, string | number>;
+} {
+	const objectNameSql = SOURCE.fieldSql.object_name;
+	const normalizedNameSql = `LOWER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(${objectNameSql}, '(', ' '), ')', ' '), '-', ' '), '/', ' '), '_', ' '))`;
+	const scoreSql = `CASE
+		WHEN LOWER(TRIM(${objectNameSql})) = @nameNeedleExact THEN 500
+		WHEN LOWER(TRIM(${objectNameSql})) LIKE @nameNeedlePrefix THEN 400
+		WHEN (' ' || ${normalizedNameSql} || ' ') LIKE @nameNeedleWord THEN 300
+		WHEN LOWER(${objectNameSql}) LIKE @nameNeedleContains THEN 200
+		ELSE 0
+	END`;
+	const lengthDeltaSql = `ABS(LENGTH(LOWER(${objectNameSql})) - @nameNeedleLength)`;
+
+	return {
+		orderSql: `${scoreSql} DESC, ${lengthDeltaSql} ASC, ${SOURCE.noradOrderSql} ASC`,
+		params: {
+			nameNeedleExact: needle,
+			nameNeedlePrefix: `${needle} %`,
+			nameNeedleWord: `% ${needle} %`,
+			nameNeedleContains: `%${needle}%`,
+			nameNeedleLength: needle.length
+		}
+	};
+}
+
 function summarizeFilters(filters: CatalogFilter[]) {
 	if (filters.length === 0) {
 		return 'no filters';
@@ -566,6 +616,7 @@ function buildFacets(whereSql: string, params: Record<string, string | number>):
 }
 
 export function runCatalogQuery(rawSpec: unknown): CatalogQueryResult {
+	const startedAt = Date.now();
 	if (typeof rawSpec !== 'object' || rawSpec === null) {
 		throw new Error('query spec must be an object');
 	}
@@ -578,6 +629,13 @@ export function runCatalogQuery(rawSpec: unknown): CatalogQueryResult {
 		Math.min(MAX_LIMIT, Number.isFinite(limitRaw) ? Math.floor(limitRaw) : DEFAULT_LIMIT)
 	);
 	const filters = validateFilters(spec.filters ?? []);
+	queryLogger.debug('catalog query received', {
+		dataSource: SOURCE.source,
+		queryType,
+		mode,
+		limit,
+		filterCount: filters.length
+	});
 
 	const { whereSql, params } = buildWhere(filters);
 	const facets = buildFacets(whereSql, params);
@@ -588,6 +646,12 @@ export function runCatalogQuery(rawSpec: unknown): CatalogQueryResult {
 	const totalCount = countRow.count;
 
 	if (queryType === 'count') {
+		queryLogger.info('catalog query completed', {
+			dataSource: SOURCE.source,
+			queryType,
+			totalCount,
+			durationMs: Date.now() - startedAt
+		});
 		return {
 			queryType,
 			mode,
@@ -600,15 +664,27 @@ export function runCatalogQuery(rawSpec: unknown): CatalogQueryResult {
 		};
 	}
 
+	const objectNameNeedle = extractSingleObjectNameNeedle(filters);
+	let orderSql = `${SOURCE.noradOrderSql} ASC`;
+	let selectParams: Record<string, string | number> = { ...params };
+	let selectLimit = limit;
+	if (objectNameNeedle) {
+		const relevanceOrder = buildObjectNameRelevanceOrder(objectNameNeedle);
+		orderSql = relevanceOrder.orderSql;
+		selectParams = { ...selectParams, ...relevanceOrder.params };
+		// Probe additional rows so the caller can see alternatives when limit is small.
+		selectLimit = Math.max(limit, 10);
+	}
+
 	const rows = db
 		.prepare(
 			`${SOURCE.selectSql}
-			${SOURCE.fromSql}
-			WHERE ${whereSql}
-			ORDER BY ${SOURCE.noradOrderSql} ASC
-			LIMIT @limit`
+				${SOURCE.fromSql}
+				WHERE ${whereSql}
+				ORDER BY ${orderSql}
+				LIMIT @selectLimit`
 		)
-		.all({ ...params, limit }) as Array<{
+		.all({ ...selectParams, selectLimit }) as Array<{
 		norad_cat_id: number;
 		object_name: string;
 		object_type: string;
@@ -623,7 +699,9 @@ export function runCatalogQuery(rawSpec: unknown): CatalogQueryResult {
 		rcs_size: string | null;
 	}>;
 
-	const sample = rows.slice(0, 10).map((row) => ({
+	const selectedRows = rows.slice(0, limit);
+	const sampleRows = rows.slice(0, 10);
+	const sample = sampleRows.map((row) => ({
 		noradCatId: row.norad_cat_id,
 		objectName: row.object_name,
 		objectType: row.object_type,
@@ -637,13 +715,22 @@ export function runCatalogQuery(rawSpec: unknown): CatalogQueryResult {
 		site: row.site,
 		rcsSize: row.rcs_size
 	}));
+	queryLogger.info('catalog query completed', {
+		dataSource: SOURCE.source,
+		queryType,
+		mode,
+		totalCount,
+		returnedCount: selectedRows.length,
+		probeCount: rows.length,
+		durationMs: Date.now() - startedAt
+	});
 
 	return {
 		queryType,
 		mode,
 		totalCount,
-		returnedCount: rows.length,
-		noradCatIds: rows.map((row) => row.norad_cat_id),
+		returnedCount: selectedRows.length,
+		noradCatIds: selectedRows.map((row) => row.norad_cat_id),
 		sample,
 		filterSummary: summarizeFilters(filters),
 		facets
@@ -651,6 +738,7 @@ export function runCatalogQuery(rawSpec: unknown): CatalogQueryResult {
 }
 
 export function getObjectDetails(noradCatId: number): ObjectDetails | null {
+	const startedAt = Date.now();
 	if (!Number.isInteger(noradCatId) || noradCatId <= 0) {
 		throw new Error('norad_cat_id must be a positive integer');
 	}
@@ -688,10 +776,15 @@ export function getObjectDetails(noradCatId: number): ObjectDetails | null {
 		| undefined;
 
 	if (!row) {
+		queryLogger.warn('object details not found', {
+			dataSource: SOURCE.source,
+			noradCatId,
+			durationMs: Date.now() - startedAt
+		});
 		return null;
 	}
 
-	return {
+	const result: ObjectDetails = {
 		noradCatId: row.norad_cat_id,
 		objectName: row.object_name,
 		objectType: row.object_type,
@@ -708,4 +801,11 @@ export function getObjectDetails(noradCatId: number): ObjectDetails | null {
 		tleLine1: row.tle_line1,
 		tleLine2: row.tle_line2
 	};
+	queryLogger.info('object details fetched', {
+		dataSource: SOURCE.source,
+		noradCatId: result.noradCatId,
+		orbitClass: result.orbitClass,
+		durationMs: Date.now() - startedAt
+	});
+	return result;
 }

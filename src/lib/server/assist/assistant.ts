@@ -7,6 +7,7 @@ import { OPENAI_API_KEY } from '$env/static/private';
 import { env } from '$env/dynamic/private';
 import { getObjectDetails, runCatalogQuery } from './queryRuntime';
 import { buildHeuristicQuery, inferViewMode, planAssistTurn } from './planner';
+import { createLogger, serializeError } from '$lib/server/logger';
 import type {
 	AssistRequestBody,
 	AssistResponse,
@@ -133,6 +134,98 @@ function buildExplainMessage(details: ObjectDetails): string {
 	return parts.join('\n');
 }
 
+function normalizeText(value: string): string {
+	return value
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, ' ')
+		.trim()
+		.replace(/\s+/g, ' ');
+}
+
+function getPrimaryObjectNameContainsNeedle(query: CatalogQuerySpec): string | null {
+	const candidates = query.filters.filter(
+		(filter) =>
+			filter.field === 'object_name' &&
+			filter.op === 'contains' &&
+			typeof filter.value === 'string' &&
+			filter.value.trim() !== ''
+	);
+	if (candidates.length !== 1) {
+		return null;
+	}
+	const normalized = normalizeText(candidates[0].value as string);
+	return normalized.length >= 2 ? normalized : null;
+}
+
+function messageSuggestsSingleTarget(message: string): boolean {
+	const latest = message.toLowerCase();
+	if (/\bhow many|count|number of|total\b/.test(latest)) {
+		return false;
+	}
+	if (
+		/\ball\b|\bevery\b|\bobjects?\b|\bsatellites?\b|\bpayloads?\b|\bdebris\b|\bfragments?\b|\brocket bodies\b|\brockets?\b|\bboosters?\b/.test(
+			latest
+		)
+	) {
+		return false;
+	}
+	return /\bthe\b|\bthis\b|\bthat\b|\bit\b|\bselected\b|\bspecific\b|\bexact\b/.test(latest);
+}
+
+function expectsSingleTarget(message: string, query: CatalogQuerySpec): boolean {
+	if (query.queryType !== 'select') {
+		return false;
+	}
+	if (typeof query.limit === 'number' && query.limit <= 1) {
+		return true;
+	}
+	if (messageSuggestsSingleTarget(message)) {
+		return true;
+	}
+	const primaryNeedle = getPrimaryObjectNameContainsNeedle(query);
+	return primaryNeedle !== null && !primaryNeedle.includes(' ') && primaryNeedle.length <= 6;
+}
+
+function isStrongNameMatch(objectName: string, normalizedNeedle: string): boolean {
+	const normalizedName = normalizeText(objectName);
+	return normalizedName === normalizedNeedle || normalizedName.startsWith(`${normalizedNeedle} `);
+}
+
+function hasConfidentSingleMatch(result: CatalogQueryResult, normalizedNeedle: string): boolean {
+	if (result.noradCatIds.length === 0) {
+		return false;
+	}
+	const selectedNoradId = result.noradCatIds[0];
+	const strongMatches = result.sample.filter((row) =>
+		isStrongNameMatch(row.objectName, normalizedNeedle)
+	);
+	return strongMatches.length === 1 && strongMatches[0].noradCatId === selectedNoradId;
+}
+
+function buildAmbiguousSingleTargetMessage(result: CatalogQueryResult): string {
+	const preview = result.sample
+		.slice(0, 5)
+		.map((row) => `${row.objectName} (${row.noradCatId})`)
+		.join(', ');
+	const lines = [
+		`I found ${result.totalCount} matches for what looks like a single-object request, so I did not change the scene.`,
+		`Current filter: ${result.filterSummary}.`
+	];
+	if (preview.length > 0) {
+		lines.push(`Closest matches: ${preview}.`);
+	}
+	lines.push('Please provide a more specific object name or a NORAD ID.');
+	lines.push('No scene change was applied.');
+	return lines.join('\n');
+}
+
+function inferSelectLimit(latestUserMessage: string, plannedLimit: unknown): number {
+	if (typeof plannedLimit === 'number' && Number.isFinite(plannedLimit)) {
+		return Math.max(1, Math.floor(plannedLimit));
+	}
+	return messageSuggestsSingleTarget(latestUserMessage) ? 1 : 2500;
+}
+
 function coerceExecutableQuery({
 	kind,
 	latestUserMessage,
@@ -160,25 +253,45 @@ function coerceExecutableQuery({
 						: defaultMode
 				: 'replace',
 		limit:
-			kind === 'view_update'
-				? typeof plannedQuery.limit === 'number' && Number.isFinite(plannedQuery.limit)
-					? Math.floor(plannedQuery.limit)
-					: 2500
-				: undefined,
+			kind === 'view_update' ? inferSelectLimit(latestUserMessage, plannedQuery.limit) : undefined,
 		filters: plannedQuery.filters
 	};
 }
 
-export async function runAssist(body: AssistRequestBody): Promise<AssistResponse> {
+export async function runAssist(
+	body: AssistRequestBody,
+	options?: { requestId?: string }
+): Promise<AssistResponse> {
 	const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 	const model = env.OPENAI_ASSIST_MODEL || 'gpt-5-mini';
 	const sceneContext = normalizeSceneContext(body.sceneContext);
 	const latestUserMessage = getLatestUserMessage(body.messages);
+	const logger = createLogger('assist.executor', {
+		requestId: options?.requestId ?? 'unknown',
+		model
+	});
+	logger.info('assist execution started', {
+		messageCount: body.messages.length,
+		hasPreviousResponseId: Boolean(body.previousResponseId),
+		selectedNoradId: sceneContext.selectedNoradId,
+		visibleCount: sceneContext.visibleCount
+	});
 
-	const planResult = await planAssistTurn({ openai, model, body });
+	const planResult = await planAssistTurn({
+		openai,
+		model,
+		body,
+		requestId: options?.requestId
+	});
 	const plan = planResult.plan;
+	logger.info('assist plan received', {
+		kind: plan.kind,
+		hasQuery: Boolean(plan.query),
+		hasQuestion: Boolean(plan.question)
+	});
 
 	if (plan.kind === 'clarify') {
+		logger.info('assist execution finished with clarify response');
 		return {
 			assistantMessage: plan.question ?? 'Could you clarify what you want me to filter or count?',
 			action: null,
@@ -188,6 +301,7 @@ export async function runAssist(body: AssistRequestBody): Promise<AssistResponse
 
 	if (plan.kind === 'explain_selected') {
 		if (sceneContext.selectedNoradId === null) {
+			logger.info('assist explanation blocked: no selected object');
 			return {
 				assistantMessage:
 					'I do not see a selected object. Select a satellite in the scene (or provide a NORAD ID), and I can explain its orbit.\nNo scene change was applied.',
@@ -197,6 +311,9 @@ export async function runAssist(body: AssistRequestBody): Promise<AssistResponse
 		}
 		const details = getObjectDetails(sceneContext.selectedNoradId);
 		if (!details) {
+			logger.warn('assist explanation failed: selected object not found', {
+				selectedNoradId: sceneContext.selectedNoradId
+			});
 			return {
 				assistantMessage:
 					'I could not find details for the selected object. Try selecting another satellite.\nNo scene change was applied.',
@@ -204,6 +321,10 @@ export async function runAssist(body: AssistRequestBody): Promise<AssistResponse
 				responseId: planResult.responseId
 			};
 		}
+		logger.info('assist explanation generated', {
+			selectedNoradId: details.noradCatId,
+			orbitClass: details.orbitClass
+		});
 		return {
 			assistantMessage: buildExplainMessage(details),
 			action: null,
@@ -216,20 +337,38 @@ export async function runAssist(body: AssistRequestBody): Promise<AssistResponse
 		latestUserMessage,
 		plannedQuery: plan.query
 	});
+	logger.info('assist query prepared', {
+		kind: plan.kind,
+		queryType: executableQuery.queryType,
+		mode: executableQuery.mode ?? null,
+		filterCount: executableQuery.filters.length
+	});
 
 	let queryResult: CatalogQueryResult;
 	try {
 		queryResult = runCatalogQuery(executableQuery);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : 'query failed';
+		logger.error('assist query execution failed', {
+			error: serializeError(error),
+			queryType: executableQuery.queryType,
+			filterCount: executableQuery.filters.length
+		});
 		return {
 			assistantMessage: `I could not execute that query (${message}). Please rephrase with concrete filters.\nNo scene change was applied.`,
 			action: null,
 			responseId: planResult.responseId
 		};
 	}
+	logger.info('assist query execution succeeded', {
+		queryType: queryResult.queryType,
+		mode: queryResult.mode,
+		totalCount: queryResult.totalCount,
+		returnedCount: queryResult.returnedCount
+	});
 
 	if (plan.kind === 'count') {
+		logger.info('assist execution finished with analytical response');
 		return {
 			assistantMessage: buildCountMessage(queryResult),
 			action: null,
@@ -237,8 +376,54 @@ export async function runAssist(body: AssistRequestBody): Promise<AssistResponse
 		};
 	}
 
+	let disambiguationPrefix: string | null = null;
+	const singleTargetExpected = expectsSingleTarget(latestUserMessage, executableQuery);
+	if (singleTargetExpected && queryResult.totalCount === 0) {
+		logger.info('assist scene action blocked: no matches for single-target request');
+		return {
+			assistantMessage:
+				'I could not find a unique object for that single-target request.\nNo scene change was applied.',
+			action: null,
+			responseId: planResult.responseId
+		};
+	}
+	if (singleTargetExpected && queryResult.totalCount > 1) {
+		const primaryNeedle = getPrimaryObjectNameContainsNeedle(executableQuery);
+		const confidentMatch =
+			primaryNeedle !== null && hasConfidentSingleMatch(queryResult, primaryNeedle);
+		if (!confidentMatch) {
+			logger.warn('assist scene action blocked: ambiguous single-target request', {
+				totalCount: queryResult.totalCount,
+				filterSummary: queryResult.filterSummary
+			});
+			return {
+				assistantMessage: buildAmbiguousSingleTargetMessage(queryResult),
+				action: null,
+				responseId: planResult.responseId
+			};
+		}
+		const selected = queryResult.sample.find(
+			(row) => row.noradCatId === queryResult.noradCatIds[0]
+		);
+		if (selected) {
+			disambiguationPrefix = `Interpreted your request as ${selected.objectName} (${selected.noradCatId}) from ${queryResult.totalCount} partial matches.`;
+		}
+		logger.info('assist single-target request auto-disambiguated', {
+			totalCount: queryResult.totalCount,
+			selectedNoradId: queryResult.noradCatIds[0]
+		});
+	}
+
+	logger.info('assist execution finished with scene action', {
+		mode: queryResult.mode,
+		returnedCount: queryResult.returnedCount
+	});
+	const viewUpdateMessage = buildViewUpdateMessage(queryResult);
 	return {
-		assistantMessage: buildViewUpdateMessage(queryResult),
+		assistantMessage:
+			disambiguationPrefix === null
+				? viewUpdateMessage
+				: `${disambiguationPrefix}\n${viewUpdateMessage}`,
 		action: {
 			mode: queryResult.mode,
 			noradCatIds: queryResult.noradCatIds,
