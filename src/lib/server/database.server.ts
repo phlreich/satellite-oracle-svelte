@@ -11,6 +11,7 @@ import { promisify } from 'util';
 // @ts-ignore
 import { env } from '$env/dynamic/private';
 import { createLogger, serializeError } from './logger';
+import { ensureDiscosTables, refreshDiscosData } from './discos.server';
 
 const DB_PATH = path.join(process.cwd(), 'src/data/satellite.db');
 const SCENE_DATA_PATH = path.join(process.cwd(), 'src/data/scene-data.json');
@@ -136,6 +137,8 @@ export async function initializeDatabaseAndSetCache() {
 
 			dbLogger.info('database tables created');
 		}
+
+		ensureDiscosTables(db);
 		// check if the CSVs are present
 		const csvs = ['gp', 'satcat', 'boxscore'];
 		if (!csvs.every((csv) => nfs.existsSync(`${process.cwd()}/src/data/${csv}.csv`))) {
@@ -149,6 +152,7 @@ export async function initializeDatabaseAndSetCache() {
 		await updateBoxscore();
 		await updateGP();
 		await deleteUnusedRows();
+		await refreshDiscosData(db);
 		await checkpoint();
 		const sceneData = await getSceneData();
 		await writeSceneDataArtifacts(sceneData);
@@ -496,6 +500,7 @@ export async function refreshData() {
 	await updateBoxscore();
 	await updateGP();
 	await deleteUnusedRows();
+	await refreshDiscosData(db);
 	const sceneData = await getSceneData();
 	await writeSceneDataArtifacts(sceneData);
 	await checkpoint();

@@ -296,7 +296,11 @@ function buildDatabaseContext() {
 		satcat:
 			'SELECT NORAD_CAT_ID, OBJECT_NAME, OBJECT_TYPE, COUNTRY, LAUNCH, SITE, APOGEE, PERIGEE FROM satcat LIMIT 5',
 		boxscore:
-			'SELECT COUNTRY, ORBITAL_TOTAL_COUNT, ORBITAL_PAYLOAD_COUNT, ORBITAL_DEBRIS_COUNT, COUNTRY_TOTAL FROM boxscore ORDER BY COUNTRY_TOTAL DESC LIMIT 5'
+			'SELECT COUNTRY, ORBITAL_TOTAL_COUNT, ORBITAL_PAYLOAD_COUNT, ORBITAL_DEBRIS_COUNT, COUNTRY_TOTAL FROM boxscore ORDER BY COUNTRY_TOTAL DESC LIMIT 5',
+		discos_objects:
+			'SELECT norad_cat_id, cospar_id, name, object_class, mission, launch_cospar_no, launch_epoch, launch_vehicle_name, launch_site_name FROM discos_objects LIMIT 5',
+		discos_object_entities:
+			'SELECT norad_cat_id, role, entity_type, entity_name FROM discos_object_entities LIMIT 5'
 	};
 
 	const parts = ['Database snapshot:'];
@@ -331,8 +335,12 @@ function buildInstructions(sceneContext: ReturnType<typeof normalizeSceneContext
 		'For large result sets, use set_visibility_from_result instead of manually listing IDs.',
 		"When the user asks to focus an object, call set_focus with target='norad' and norad_id.",
 		"When the user asks to focus Earth, call set_focus with target='earth'.",
+		'When the user asks to see objects, prefer applying a visibility action instead of returning long lists.',
+		'Limit exploration to at most two SQL probes before deciding on an action or asking one concise clarification.',
+		'Avoid schema-probing queries against sqlite_master unless absolutely necessary.',
 		'You may call multiple tools before your final answer.',
 		'Keep the final answer concise and explicit about scene changes applied.',
+		'For launch provider or operator/owner requests, prefer discos_objects and discos_object_entities first.',
 		`Scene context: ${JSON.stringify(sceneContext)}.`,
 		buildDatabaseContext()
 	].join('\n');
