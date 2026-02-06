@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { twoline2satrec, gstime } from 'satellite.js';
+import { twoline2satrec, gstime, geodeticToEcf, ecfToEci } from 'satellite.js';
 import Stats from 'three/examples/jsm/libs/stats.module.js';
 import type { Writable } from 'svelte/store';
 import { base } from '$app/paths';
@@ -48,6 +48,33 @@ let animationFrameId: number;
 const resolution = 100;
 const earthRadius = 6356.7523;
 const lineSurfaceOffset = 2; // avoid z-fighting where line meets the surface
+const oneSiderealDayInMilliseconds = 86164.0916 * 1000;
+const referenceTime = new Date().setUTCHours(0, 0, 0, 0);
+const gmstAtReferenceTimeRad = gstime(new Date(referenceTime));
+const textureAlignmentOffsetRad = -Math.PI / 2;
+const austinLatitudeRad = THREE.MathUtils.degToRad(30.2672);
+const austinLongitudeRad = THREE.MathUtils.degToRad(-97.7431);
+
+const getEarthRotationAtTimeRad = (timeMs: number) => {
+	const timeElapsed = timeMs - referenceTime;
+	return ((timeElapsed % oneSiderealDayInMilliseconds) / oneSiderealDayInMilliseconds) * Math.PI * 2;
+};
+
+const getAustinTargetAtTime = (time: Date) => {
+	const gmst = gstime(time);
+	const austinEci = ecfToEci(
+		geodeticToEcf({
+			latitude: austinLatitudeRad,
+			longitude: austinLongitudeRad,
+			height: 0
+		}),
+		gmst
+	);
+	// Scene axes are [ECI y, ECI z, ECI x].
+	return new THREE.Vector3(austinEci.y, austinEci.z, austinEci.x)
+		.normalize()
+		.multiplyScalar(earthRadius);
+};
 
 const earthGeometry = new THREE.SphereGeometry(earthRadius, resolution, resolution);
 const initialMaterial = new THREE.MeshBasicMaterial({ color: 0x005f9a });
@@ -163,6 +190,18 @@ export const createScene = async (
 	controls.rotateSpeed = 0.8;
 	controls.maxDistance = 1000000;
 	controls.minDistance = 7000;
+	const initialViewTime = new Date();
+	const austinTarget = getAustinTargetAtTime(initialViewTime);
+	const initialCameraDistance = camera.position.length();
+	const earthCenter = new THREE.Vector3(0, 0, 0);
+	camera.position.copy(austinTarget.clone().normalize().multiplyScalar(initialCameraDistance));
+	controls.target.copy(earthCenter);
+	camera.lookAt(earthCenter);
+	earthMesh.rotation.y =
+		gmstAtReferenceTimeRad +
+		getEarthRotationAtTimeRad(initialViewTime.getTime()) +
+		textureAlignmentOffsetRad;
+	controls.update();
 
 	// initialize satellite positions
 	const N = satellites.length;
@@ -640,20 +679,6 @@ export const createScene = async (
 	// line to center
 	// const lineGeometry = new THREE.LineGeometry();
 
-	// Constants for Earth's rotation
-	const oneSiderealDayInMilliseconds = 86164.0916 * 1000; // Sidereal day in milliseconds
-	const referenceTime = new Date().setUTCHours(0, 0, 0, 0); // Midnight UTC as a reference start point
-
-	// Calculate GMST at the reference time (midnight UTC)
-	const refDateObject = new Date(referenceTime);
-	const gmstAtReferenceTimeRad = gstime(refDateObject); // Re-enabled
-
-	// This constant is used to align the texture's Prime Meridian (0° longitude)
-	// with the direction of the vernal equinox in the Three.js scene when GMST is 0.
-	// Based on: Earth's Prime Meridian on texture is +X at rotation.y=0
-	// Vernal Equinox direction in Three.js scene is +Z.
-	// Rotation from +X to +Z around Y is -90 degrees.
-	const textureAlignmentOffsetRad = -Math.PI / 2; // Was previously commented out or a different value
 	let lastHoverCheckTs = 0;
 	const hoverCheckIntervalMs = 180;
 
@@ -662,21 +687,9 @@ export const createScene = async (
 			if (import.meta.env.DEV) {
 				stats.update();
 			}
-			const currentTime = new Date().getTime(); // Re-enabled
-			const timeElapsed = currentTime - referenceTime; // Re-enabled
-
-			// Calculate the Earth's dynamic rotation since the referenceTime
-			const dynamicRotationSinceRefTimeDeg =
-				((timeElapsed % oneSiderealDayInMilliseconds) / oneSiderealDayInMilliseconds) * 360; // Re-enabled
-			const dynamicRotationSinceRefTimeRad = THREE.MathUtils.degToRad(
-				dynamicRotationSinceRefTimeDeg
-			); // Re-enabled
-
-			// Current GMST = GMST at reference time + dynamic rotation since reference time
-			const currentGmstRad = gmstAtReferenceTimeRad + dynamicRotationSinceRefTimeRad; // Re-enabled
-
-			// Apply GMST and the texture alignment offset
-			earthMesh.rotation.y = currentGmstRad + textureAlignmentOffsetRad; // Corrected logic
+			const currentTime = new Date().getTime();
+			earthMesh.rotation.y =
+				gmstAtReferenceTimeRad + getEarthRotationAtTimeRad(currentTime) + textureAlignmentOffsetRad;
 
 			extrapolateFromVelocity(Date.now());
 			geometry.attributes.position.needsUpdate = true;
