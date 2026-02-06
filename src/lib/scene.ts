@@ -23,6 +23,11 @@ type SelectedSatelliteState = {
 	index?: number;
 	satrec?: unknown;
 } | null;
+type SceneController = {
+	cleanup: () => void;
+	focusPreviousVisibleSatellite: () => void;
+	focusNextVisibleSatellite: () => void;
+};
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(
@@ -134,7 +139,7 @@ export const createScene = async (
 	satellites: SceneDataRow[],
 	selectedSatellite: Writable<SelectedSatelliteState>,
 	sharedData: Writable<SharedSceneData>
-) => {
+): Promise<SceneController> => {
 	let audioFlag = false;
 	const playAudio = () => {
 		audioFlag = false;
@@ -505,6 +510,12 @@ export const createScene = async (
 	}
 
 	function selectSatellite(index: number) {
+		if (index < 0 || index >= N || !visibility[index]) {
+			return;
+		}
+		// Reset active tracking so camera can lerp to the newly selected satellite.
+		trackTarget = undefined;
+		previousSatellitePosition = undefined;
 		clearSelectedSatelliteHighlight();
 		selectedSatellite.set({
 			name: satellites[index].slice(-1)[0] + ' NORAD ID: ' + satelliteData[index].norad_cat_id,
@@ -521,6 +532,25 @@ export const createScene = async (
 		};
 
 		drawOrbit(index);
+	}
+
+	function selectRelativeVisibleSatellite(step: -1 | 1) {
+		if (activeVisibleIndices.length === 0) {
+			return;
+		}
+		let selectedPosition = -1;
+		if (localSelectedSatellite !== undefined) {
+			selectedPosition = activeVisibleIndices.indexOf(localSelectedSatellite);
+		}
+		if (selectedPosition === -1) {
+			const fallbackIndex =
+				step > 0 ? activeVisibleIndices[0] : activeVisibleIndices[activeVisibleIndices.length - 1];
+			selectSatellite(fallbackIndex);
+			return;
+		}
+		const nextPosition =
+			(selectedPosition + step + activeVisibleIndices.length) % activeVisibleIndices.length;
+		selectSatellite(activeVisibleIndices[nextPosition]);
 	}
 
 	function updateMouseCoordinates(event: MouseEvent) {
@@ -708,19 +738,23 @@ export const createScene = async (
 	renderer.domElement.addEventListener('mouseenter', onCanvasMouseEnter);
 	renderer.domElement.addEventListener('mouseleave', onCanvasMouseLeave);
 	// Return cleanup function
-	return () => {
-		cancelAnimationFrame(animationFrameId); // Cancel the animation loop
-		satelliteWorkers.forEach((worker) => worker.terminate());
-		stopOrbitTracking();
-		orbitWorker.terminate();
-		document.removeEventListener('visibilitychange', handleVisibilityChange);
-		window.removeEventListener('resize', resize);
-		window.removeEventListener('mousemove', updateMouseCoordinates);
-		window.removeEventListener('mousedown', onMouseDown);
-		window.removeEventListener('mouseup', onMouseUp);
-		window.removeEventListener('click', onClick);
-		renderer.domElement.removeEventListener('mouseenter', onCanvasMouseEnter);
-		renderer.domElement.removeEventListener('mouseleave', onCanvasMouseLeave);
+	return {
+		cleanup: () => {
+			cancelAnimationFrame(animationFrameId); // Cancel the animation loop
+			satelliteWorkers.forEach((worker) => worker.terminate());
+			stopOrbitTracking();
+			orbitWorker.terminate();
+			document.removeEventListener('visibilitychange', handleVisibilityChange);
+			window.removeEventListener('resize', resize);
+			window.removeEventListener('mousemove', updateMouseCoordinates);
+			window.removeEventListener('mousedown', onMouseDown);
+			window.removeEventListener('mouseup', onMouseUp);
+			window.removeEventListener('click', onClick);
+			renderer.domElement.removeEventListener('mouseenter', onCanvasMouseEnter);
+			renderer.domElement.removeEventListener('mouseleave', onCanvasMouseLeave);
+		},
+		focusPreviousVisibleSatellite: () => selectRelativeVisibleSatellite(-1),
+		focusNextVisibleSatellite: () => selectRelativeVisibleSatellite(1)
 	};
 };
 

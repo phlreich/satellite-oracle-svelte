@@ -88,7 +88,9 @@
 
 	export let data: PageData;
 	let el: HTMLCanvasElement;
-	let cleanup: () => void;
+	let cleanup: (() => void) | undefined;
+	let focusPreviousVisibleSatellite = () => {};
+	let focusNextVisibleSatellite = () => {};
 
 	interface UserMessage {
 		role: 'user';
@@ -142,8 +144,10 @@
 	onMount(() => {
 		const userAgent = window.navigator.userAgent;
 		isMobileView = isMobile(userAgent);
-		createScene(el, data.sceneData, selectedSatellite, sharedData).then((cleanupFunction) => {
-			cleanup = cleanupFunction;
+		createScene(el, data.sceneData, selectedSatellite, sharedData).then((sceneController) => {
+			cleanup = sceneController.cleanup;
+			focusPreviousVisibleSatellite = sceneController.focusPreviousVisibleSatellite;
+			focusNextVisibleSatellite = sceneController.focusNextVisibleSatellite;
 			hideLoadingScreen();
 		});
 		latLongIntervalId = window.setInterval(() => {
@@ -162,6 +166,18 @@
 		}
 		if (cleanup) cleanup();
 	});
+
+	function goLeft() {
+		focusPreviousVisibleSatellite();
+	}
+
+	function goRight() {
+		focusNextVisibleSatellite();
+	}
+
+	function formatCoordinate(value: number | undefined) {
+		return typeof value === 'number' ? `${value.toFixed(2)}°` : '--';
+	}
 
 	function typeText(text: string, delay = 100) {
 		let i = 0;
@@ -341,10 +357,16 @@
 	{#if $selectedSatellite}
 		<!-- Display your satellite information here -->
 		<h2>{$selectedSatellite.name}</h2>
-		{#if typeof $selectedSatellite.longitude === 'number' && typeof $selectedSatellite.latitude === 'number'}
-			<pre>Latitude:   {$selectedSatellite.latitude.toFixed(2)}°</pre>
-			<pre>Longitude:  {$selectedSatellite.longitude.toFixed(2)}°</pre>
-		{/if}
+		<pre>Latitude:   {formatCoordinate($selectedSatellite.latitude)}</pre>
+		<pre>Longitude:  {formatCoordinate($selectedSatellite.longitude)}</pre>
+		<div class="satellite-nav">
+			<button class="nav-button" on:click={goLeft} aria-label="Go to previous visible object">
+				&larr;
+			</button>
+			<button class="nav-button" on:click={goRight} aria-label="Go to next visible object">
+				&rarr;
+			</button>
+		</div>
 		<!-- <pre>{$selectedSatellite.details}</pre> -->
 	{/if}
 </div>
@@ -482,9 +504,39 @@
 		left: 10px;
 		color: white;
 		background: rgba(0, 0, 0, 0.9);
-		padding: 10px;
+		padding: 10px 90px 10px 10px;
 		border-radius: 5px;
 		border: 1px solid white;
+	}
+
+	.satellite-nav {
+		position: absolute;
+		right: 10px;
+		bottom: 10px;
+		display: flex;
+		gap: 6px;
+	}
+
+	.nav-button {
+		width: 30px;
+		height: 30px;
+		padding: 0;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		border-radius: 5px;
+		border: 1px solid #ccc;
+		color: white;
+		background: rgba(0, 0, 0, 0.9);
+		outline: none;
+		font-size: 20px;
+		line-height: 1;
+		cursor: pointer;
+	}
+
+	.nav-button:hover {
+		background-color: #232121;
+		border-color: #aaa;
 	}
 
 	.visible {
