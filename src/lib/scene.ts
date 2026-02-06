@@ -681,6 +681,28 @@ export const createScene = async (
 
 	let lastHoverCheckTs = 0;
 	const hoverCheckIntervalMs = 180;
+	const waitForInitialSatelliteData = async () => {
+		if (activeVisibleIndices.length === 0) {
+			return;
+		}
+		const minReadySatellites = Math.min(250, activeVisibleIndices.length);
+		const maxWaitMs = 3000;
+		const pollIntervalMs = 40;
+		const startTimeMs = Date.now();
+
+		while (Date.now() - startTimeMs < maxWaitMs) {
+			let readyCount = 0;
+			for (let i = 0; i < activeVisibleIndices.length; i++) {
+				if (satelliteUpdateTimes[activeVisibleIndices[i]] > 0) {
+					readyCount += 1;
+					if (readyCount >= minReadySatellites) {
+						return;
+					}
+				}
+			}
+			await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+		}
+	};
 
 	const animate = () => {
 		const onAnimationFrame = async () => {
@@ -739,8 +761,7 @@ export const createScene = async (
 		animationFrameId = requestAnimationFrame(onAnimationFrame);
 	};
 	resize();
-	// TODO find out why removing the following line breaks hovercolor and click
-	await new Promise((r) => setTimeout(r, 1000));
+	await waitForInitialSatelliteData();
 	satelliteRenderPositions.set(satelliteTargetPositions);
 	animate();
 

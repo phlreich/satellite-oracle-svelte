@@ -6,6 +6,8 @@ import type { ParseResult } from 'papaparse';
 import fs from 'fs/promises';
 import nfs from 'fs';
 import path from 'path';
+import { gzip } from 'zlib';
+import { promisify } from 'util';
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
 import { env } from '$env/dynamic/private';
@@ -14,8 +16,11 @@ import pkg from 'node-sql-parser';
 const { Parser } = pkg;
 
 const DB_PATH = path.join(process.cwd(), 'src/data/satellite.db');
+const SCENE_DATA_PATH = path.join(process.cwd(), 'src/data/scene-data.json');
+const SCENE_DATA_GZIP_PATH = `${SCENE_DATA_PATH}.gz`;
 const MAX_QUERY_LENGTH = 2000;
 const ALLOWED_TABLES = new Set(['gp', 'satcat']);
+const gzipAsync = promisify(gzip);
 
 const db = new Database(DB_PATH);
 //db.pragma('journal_mode = WAL');
@@ -147,7 +152,9 @@ export async function initializeDatabaseAndSetCache() {
 		await updateGP();
 		await deleteUnusedRows();
 		await checkpoint();
-		setCache(await getSceneData());
+		const sceneData = await getSceneData();
+		setCache(sceneData);
+		await writeSceneDataArtifacts(sceneData);
 	} catch (err) {
 		console.error('Error checking database tables:', err);
 		// TODO implement error handling
@@ -197,6 +204,21 @@ export async function getSceneData(): Promise<Array<[string, string, string, num
 		row.OBJECT_NAME
 	]);
 	return compactRows;
+}
+
+async function writeSceneDataArtifacts(sceneData: Array<[string, string, string, number, string]>) {
+	const json = JSON.stringify(sceneData);
+	const gzipBuffer = await gzipAsync(json, { level: 9 });
+	const tmpSceneDataPath = `${SCENE_DATA_PATH}.tmp`;
+	const tmpSceneDataGzipPath = `${SCENE_DATA_GZIP_PATH}.tmp`;
+
+	await fs.writeFile(tmpSceneDataPath, json, 'utf8');
+	await fs.writeFile(tmpSceneDataGzipPath, gzipBuffer);
+	await fs.rename(tmpSceneDataPath, SCENE_DATA_PATH);
+	await fs.rename(tmpSceneDataGzipPath, SCENE_DATA_GZIP_PATH);
+	console.log(
+		`Updated scene-data artifacts: ${SCENE_DATA_PATH} (${Math.round(json.length / 1024)} KB), ${SCENE_DATA_GZIP_PATH} (${Math.round(gzipBuffer.length / 1024)} KB)`
+	);
 }
 
 export function runQuery(query: string): Record<string, unknown>[] | QueryError {
@@ -541,7 +563,9 @@ export async function refreshData() {
 	await updateBoxscore();
 	await updateGP();
 	await deleteUnusedRows();
-	setCache(await getSceneData());
+	const sceneData = await getSceneData();
+	setCache(sceneData);
+	await writeSceneDataArtifacts(sceneData);
 	await checkpoint();
 	const endTime = new Date().getTime();
 	console.log('finished database refresh node cron job at time: ', endTime);

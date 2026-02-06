@@ -2,21 +2,25 @@
 
 import * as db from '$lib/server/database.server';
 import { getCache, setCache } from '$lib/server/cache';
+import fs from 'fs';
+import path from 'path';
 import type { PageServerLoad } from './$types';
 
+const SCENE_DATA_PATH = path.join(process.cwd(), 'src/data/scene-data.json');
+
 export const load: PageServerLoad = async () => {
-	// const startTime = performance.now();
+	// Prefer static scene-data artifact; fallback to DB-backed payload if it is missing.
+	if (fs.existsSync(SCENE_DATA_PATH)) {
+		return { sceneData: null };
+	}
+
 	const cache = getCache();
 
 	if (!cache.sceneData) {
 		const data = await db.getSceneData();
 		setCache(data);
-		// const endTime = performance.now();
-		// console.log(`No cache found, retrieved data from database - data retrieval took ${endTime - startTime} milliseconds`);
 		return { sceneData: data };
 	}
-	// const endTime = performance.now();
-	// console.log(`Used cache - data retrieval took ${endTime - startTime} milliseconds`);
 
 	return { sceneData: cache.sceneData };
 };

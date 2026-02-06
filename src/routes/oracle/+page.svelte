@@ -105,6 +105,7 @@
 
 	type Message = UserMessage | ToolMessage;
 	type SharedSceneData = [Array<{ NORAD_CAT_ID: number }>, 'show_objects' | 'draw_orbits'] | [];
+	type SceneDataRow = [string, string, string, number, string];
 
 	const chatHistory = writable<Message[]>([]);
 
@@ -141,15 +142,37 @@
 		}
 	}
 
+	async function loadSceneData(): Promise<SceneDataRow[]> {
+		if (Array.isArray(data.sceneData)) {
+			return data.sceneData;
+		}
+		const response = await fetch(`${base}/data/scene-data.json`);
+		if (!response.ok) {
+			throw new Error(`Failed to load scene data: ${response.status}`);
+		}
+		const payload = (await response.json()) as unknown;
+		if (!Array.isArray(payload)) {
+			throw new Error('Invalid scene data response');
+		}
+		return payload as SceneDataRow[];
+	}
+
 	onMount(() => {
 		const userAgent = window.navigator.userAgent;
 		isMobileView = isMobile(userAgent);
-		createScene(el, data.sceneData, selectedSatellite, sharedData).then((sceneController) => {
-			cleanup = sceneController.cleanup;
-			focusPreviousVisibleSatellite = sceneController.focusPreviousVisibleSatellite;
-			focusNextVisibleSatellite = sceneController.focusNextVisibleSatellite;
-			hideLoadingScreen();
-		});
+		(async () => {
+			try {
+				const sceneData = await loadSceneData();
+				const sceneController = await createScene(el, sceneData, selectedSatellite, sharedData);
+				cleanup = sceneController.cleanup;
+				focusPreviousVisibleSatellite = sceneController.focusPreviousVisibleSatellite;
+				focusNextVisibleSatellite = sceneController.focusNextVisibleSatellite;
+			} catch (error) {
+				console.error('Error initializing scene:', error);
+			} finally {
+				hideLoadingScreen();
+			}
+		})();
 		latLongIntervalId = window.setInterval(() => {
 			updateLatLong();
 		}, 1000);
