@@ -19,10 +19,8 @@ const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX_REQUESTS = 60;
 const RATE_LIMIT_PATH_PREFIXES = [
 	'/api/assist',
-	'/api/ai-chat',
 	'/api/query',
 	'/satellite-oracle/api/assist',
-	'/satellite-oracle/api/ai-chat',
 	'/satellite-oracle/api/query'
 ];
 const rateLimitStore = new Map<string, { count: number; windowStart: number }>();

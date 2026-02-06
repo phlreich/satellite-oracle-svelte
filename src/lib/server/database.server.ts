@@ -1,6 +1,5 @@
 // src/lib/server/database.server.ts
 import Database from 'better-sqlite3';
-import type { satcatRow } from './types.js';
 import Papa from 'papaparse';
 import type { ParseResult } from 'papaparse';
 import fs from 'fs/promises';
@@ -170,16 +169,6 @@ export async function initializeDatabaseAndSetCache() {
 		});
 		// TODO implement error handling
 	}
-}
-
-export function getSatcatHead(limit = 2): satcatRow[] {
-	const sql = `
-  SELECT * FROM satcat
-limit $limit  
-  `;
-	const stmnt = db.prepare(sql);
-	const rows = stmnt.all({ limit });
-	return rows as satcatRow[];
 }
 
 interface SatelliteRow {
