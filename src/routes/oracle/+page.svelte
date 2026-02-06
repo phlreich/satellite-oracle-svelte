@@ -1,6 +1,5 @@
 <!-- src/routes/oracle/+page.svelte -->
 <script lang="ts">
-	import type { PageData } from './$types';
 	import { onMount, onDestroy, tick } from 'svelte';
 	import { createScene } from '$lib/scene';
 	import { writable, get } from 'svelte/store';
@@ -86,19 +85,17 @@
 	let messageContainer: HTMLElement;
 	let latLongIntervalId: number | undefined;
 
-	export let data: PageData;
 	let el: HTMLCanvasElement;
 	let cleanup: (() => void) | undefined;
 	let focusPreviousVisibleSatellite = () => {};
 	let focusNextVisibleSatellite = () => {};
-	let getVisibleNoradIdsSample = (_limit = 250): number[] => [];
 	let getVisibleCount = () => 0;
 
 	type Message = {
 		role: 'user' | 'assistant';
 		content: string;
 	};
-	type SharedSceneIntent = 'show_objects' | 'draw_orbits' | 'add_objects' | 'remove_objects';
+	type SharedSceneIntent = 'replace' | 'add' | 'remove';
 	type SharedSceneData = [Array<{ NORAD_CAT_ID: number }>, SharedSceneIntent] | [];
 	type SceneDataRow = [string, string, string, number, string];
 	type AssistResponseBody = {
@@ -118,11 +115,6 @@
 		chatHistory.set([]);
 	}
 
-	function getChatHistory() {
-		return get(chatHistory);
-	}
-
-	(window as any).getChatHistory = getChatHistory;
 	const sharedData = writable<SharedSceneData>([]);
 
 	// Reactive variable to hold selected satellite info
@@ -149,9 +141,6 @@
 	}
 
 	async function loadSceneData(): Promise<SceneDataRow[]> {
-		if (Array.isArray(data.sceneData)) {
-			return data.sceneData;
-		}
 		const response = await fetch(`${base}/data/scene-data.json`);
 		if (!response.ok) {
 			throw new Error(`Failed to load scene data: ${response.status}`);
@@ -173,7 +162,6 @@
 				cleanup = sceneController.cleanup;
 				focusPreviousVisibleSatellite = sceneController.focusPreviousVisibleSatellite;
 				focusNextVisibleSatellite = sceneController.focusNextVisibleSatellite;
-				getVisibleNoradIdsSample = sceneController.getVisibleNoradIdsSample;
 				getVisibleCount = sceneController.getVisibleCount;
 			} catch (error) {
 				console.error('Error initializing scene:', error);
@@ -186,7 +174,6 @@
 		}, 1000);
 		chatWindow.addEventListener('mousemove', updateCursor);
 		chatWindow.addEventListener('mousedown', initDrag);
-		// typeText('Show all American non-debris objects launched before 2009', 100);
 	});
 
 	onDestroy(() => {
@@ -210,18 +197,6 @@
 		return typeof value === 'number' ? `${value.toFixed(2)}°` : '--';
 	}
 
-	function typeText(text: string, delay = 100) {
-		let i = 0;
-		const interval = setInterval(() => {
-			$inputValue += text[i];
-			i++;
-			if (i >= text.length) {
-				clearInterval(interval);
-				handleKeyUp({ key: 'Enter' });
-			}
-		}, delay);
-	}
-
 	function updateLatLong() {
 		if ($selectedSatellite?.satrec) {
 			const now = new Date();
@@ -235,16 +210,6 @@
 		}
 	}
 
-	function mapModeToIntent(mode: 'replace' | 'add' | 'remove'): SharedSceneIntent {
-		if (mode === 'add') {
-			return 'add_objects';
-		}
-		if (mode === 'remove') {
-			return 'remove_objects';
-		}
-		return 'show_objects';
-	}
-
 	async function assistChat(history: Message[]) {
 		try {
 			const response = await fetch(`${base}/api/assist`, {
@@ -256,9 +221,7 @@
 					messages: history,
 					sceneContext: {
 						selectedNoradId: $selectedSatellite?.noradCatId ?? null,
-						visibleNoradIds: getVisibleNoradIdsSample(250),
-						visibleCount: getVisibleCount(),
-						timestamp: new Date().toISOString()
+						visibleCount: getVisibleCount()
 					}
 				})
 			});
@@ -301,7 +264,7 @@
 
 		if (result.action) {
 			const rows = result.action.noradCatIds.map((id) => ({ NORAD_CAT_ID: id }));
-			sharedData.set([rows, mapModeToIntent(result.action.mode)]);
+			sharedData.set([rows, result.action.mode]);
 		}
 
 		chatHistory.update((history) => {

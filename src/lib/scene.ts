@@ -7,9 +7,7 @@ import { base } from '$app/paths';
 
 type SceneDataRow = [string, string, string, number, string];
 type QueryResultRow = { NORAD_CAT_ID: number };
-type SharedSceneData =
-	| [QueryResultRow[], 'show_objects' | 'draw_orbits' | 'add_objects' | 'remove_objects']
-	| [];
+type SharedSceneData = [QueryResultRow[], 'replace' | 'add' | 'remove'] | [];
 type OrbitWorkerPoint = { x: number; y: number; z: number };
 type OrbitWorkerResponse = {
 	type: 'orbit-points';
@@ -30,7 +28,6 @@ type SceneController = {
 	cleanup: () => void;
 	focusPreviousVisibleSatellite: () => void;
 	focusNextVisibleSatellite: () => void;
-	getVisibleNoradIdsSample: (limit?: number) => number[];
 	getVisibleCount: () => number;
 };
 
@@ -174,13 +171,6 @@ export const createScene = async (
 	selectedSatellite: Writable<SelectedSatelliteState>,
 	sharedData: Writable<SharedSceneData>
 ): Promise<SceneController> => {
-	let audioFlag = false;
-	const playAudio = () => {
-		audioFlag = false;
-		const audio = new Audio(`${base}/threnody.mp3`);
-		audio.play();
-	};
-
 	const raycaster = new THREE.Raycaster();
 	raycaster.params.Points = { threshold: 20 };
 	const mouse = new THREE.Vector2();
@@ -621,9 +611,6 @@ export const createScene = async (
 	}
 
 	function onClick() {
-		if (audioFlag) {
-			playAudio();
-		}
 		const shortClickDuration = 230;
 		if (duration < shortClickDuration && mouseDownEvent) {
 			handleShortClick(mouseDownEvent);
@@ -664,7 +651,7 @@ export const createScene = async (
 			return;
 		}
 		const selectedNoradIds = new Set(data[0].map((item: QueryResultRow) => item.NORAD_CAT_ID));
-		if (data[1] === 'show_objects') {
+		if (data[1] === 'replace') {
 			for (let i = 0; i < N; i++) {
 				const noradID = satelliteData[i].norad_cat_id;
 				if (selectedNoradIds.has(noradID)) {
@@ -674,14 +661,7 @@ export const createScene = async (
 				}
 			}
 			geometry.attributes.visibility.needsUpdate = true;
-		} else if (data[1] === 'draw_orbits') {
-			for (let i = 0; i < N; i++) {
-				const noradID = satelliteData[i].norad_cat_id;
-				if (selectedNoradIds.has(noradID)) {
-					visibility[i] = 1.0;
-				}
-			}
-		} else if (data[1] === 'add_objects') {
+		} else if (data[1] === 'add') {
 			for (let i = 0; i < N; i++) {
 				const noradID = satelliteData[i].norad_cat_id;
 				if (selectedNoradIds.has(noradID)) {
@@ -689,7 +669,7 @@ export const createScene = async (
 				}
 			}
 			geometry.attributes.visibility.needsUpdate = true;
-		} else if (data[1] === 'remove_objects') {
+		} else if (data[1] === 'remove') {
 			for (let i = 0; i < N; i++) {
 				const noradID = satelliteData[i].norad_cat_id;
 				if (selectedNoradIds.has(noradID)) {
@@ -814,11 +794,6 @@ export const createScene = async (
 		},
 		focusPreviousVisibleSatellite: () => selectRelativeVisibleSatellite(-1),
 		focusNextVisibleSatellite: () => selectRelativeVisibleSatellite(1),
-		getVisibleNoradIdsSample: (limit = 250) => {
-			return activeVisibleIndices
-				.slice(0, Math.max(1, limit))
-				.map((index) => satelliteData[index].norad_cat_id);
-		},
 		getVisibleCount: () => activeVisibleIndices.length
 	};
 };

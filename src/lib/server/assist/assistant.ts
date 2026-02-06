@@ -6,7 +6,7 @@ import { OPENAI_API_KEY } from '$env/static/private';
 // @ts-ignore
 import { env } from '$env/dynamic/private';
 import { getObjectDetails, runCatalogQuery } from './queryRuntime';
-import { buildHeuristicQuery, inferViewMode, planAssistTurn } from './planner';
+import { planAssistTurn } from './planner';
 import { createLogger, serializeError } from '$lib/server/logger';
 import type {
 	AssistRequestBody,
@@ -18,23 +18,11 @@ import type {
 	SceneContext
 } from './types';
 
-function getLatestUserMessage(messages: AssistRequestBody['messages']): string {
-	for (let i = messages.length - 1; i >= 0; i--) {
-		if (messages[i].role === 'user') {
-			return messages[i].content;
-		}
-	}
-	return '';
-}
-
 function normalizeSceneContext(sceneContext?: SceneContext) {
-	const visibleNoradIds = Array.isArray(sceneContext?.visibleNoradIds)
-		? sceneContext.visibleNoradIds.filter((value) => Number.isInteger(value)).slice(0, 250)
-		: [];
 	const visibleCount =
 		typeof sceneContext?.visibleCount === 'number' && Number.isFinite(sceneContext.visibleCount)
 			? Math.max(0, Math.floor(sceneContext.visibleCount))
-			: visibleNoradIds.length;
+			: 0;
 
 	return {
 		selectedNoradId:
@@ -42,12 +30,7 @@ function normalizeSceneContext(sceneContext?: SceneContext) {
 			Number.isInteger(sceneContext.selectedNoradId)
 				? sceneContext.selectedNoradId
 				: null,
-		visibleNoradIds,
-		visibleCount,
-		timestamp:
-			typeof sceneContext?.timestamp === 'string' && sceneContext.timestamp.trim() !== ''
-				? sceneContext.timestamp
-				: new Date().toISOString()
+		visibleCount
 	};
 }
 
@@ -134,149 +117,57 @@ function buildExplainMessage(details: ObjectDetails): string {
 	return parts.join('\n');
 }
 
-function normalizeText(value: string): string {
-	return value
-		.toLowerCase()
-		.replace(/[^a-z0-9]+/g, ' ')
-		.trim()
-		.replace(/\s+/g, ' ');
-}
-
-function getPrimaryObjectNameContainsNeedle(query: CatalogQuerySpec): string | null {
-	const candidates = query.filters.filter(
-		(filter) =>
-			filter.field === 'object_name' &&
-			filter.op === 'contains' &&
-			typeof filter.value === 'string' &&
-			filter.value.trim() !== ''
-	);
-	if (candidates.length !== 1) {
-		return null;
-	}
-	const normalized = normalizeText(candidates[0].value as string);
-	return normalized.length >= 2 ? normalized : null;
-}
-
-function messageSuggestsSingleTarget(message: string): boolean {
-	const latest = message.toLowerCase();
-	if (/\bhow many|count|number of|total\b/.test(latest)) {
-		return false;
-	}
-	if (
-		/\ball\b|\bevery\b|\bobjects?\b|\bsatellites?\b|\bpayloads?\b|\bdebris\b|\bfragments?\b|\brocket bodies\b|\brockets?\b|\bboosters?\b/.test(
-			latest
-		)
-	) {
-		return false;
-	}
-	return /\bthe\b|\bthis\b|\bthat\b|\bit\b|\bselected\b|\bspecific\b|\bexact\b/.test(latest);
-}
-
-function expectsSingleTarget(message: string, query: CatalogQuerySpec): boolean {
-	if (query.queryType !== 'select') {
-		return false;
-	}
-	if (typeof query.limit === 'number' && query.limit <= 1) {
-		return true;
-	}
-	if (messageSuggestsSingleTarget(message)) {
-		return true;
-	}
-	const primaryNeedle = getPrimaryObjectNameContainsNeedle(query);
-	return primaryNeedle !== null && !primaryNeedle.includes(' ') && primaryNeedle.length <= 6;
-}
-
-function isStrongNameMatch(objectName: string, normalizedNeedle: string): boolean {
-	const normalizedName = normalizeText(objectName);
-	return normalizedName === normalizedNeedle || normalizedName.startsWith(`${normalizedNeedle} `);
-}
-
-function hasConfidentSingleMatch(result: CatalogQueryResult, normalizedNeedle: string): boolean {
-	if (result.noradCatIds.length === 0) {
-		return false;
-	}
-	const selectedNoradId = result.noradCatIds[0];
-	const strongMatches = result.sample.filter((row) =>
-		isStrongNameMatch(row.objectName, normalizedNeedle)
-	);
-	return strongMatches.length === 1 && strongMatches[0].noradCatId === selectedNoradId;
-}
-
-function buildAmbiguousSingleTargetMessage(result: CatalogQueryResult): string {
+function buildPlannerSingleTargetConflictMessage(result: CatalogQueryResult): string {
 	const preview = result.sample
 		.slice(0, 5)
 		.map((row) => `${row.objectName} (${row.noradCatId})`)
 		.join(', ');
+	if (result.totalCount === 0) {
+		return 'Planner requested one object (limit=1), but the query matched none.\nNo scene change was applied.';
+	}
 	const lines = [
-		`I found ${result.totalCount} matches for what looks like a single-object request, so I did not change the scene.`,
+		`Planner requested one object (limit=1), but the query matched ${result.totalCount}.`,
 		`Current filter: ${result.filterSummary}.`
 	];
 	if (preview.length > 0) {
 		lines.push(`Closest matches: ${preview}.`);
 	}
-	lines.push('Please provide a more specific object name or a NORAD ID.');
+	lines.push('Please provide a more specific filter or NORAD ID.');
 	lines.push('No scene change was applied.');
 	return lines.join('\n');
 }
 
-function inferSelectLimit({
-	latestUserMessage,
-	plannedLimit
-}: {
-	latestUserMessage: string;
-	plannedLimit: unknown;
-}): number | undefined {
-	if (typeof plannedLimit === 'number' && Number.isFinite(plannedLimit)) {
-		return Math.max(1, Math.floor(plannedLimit));
+function normalizeLimit(value: unknown): number | undefined {
+	if (typeof value !== 'number' || !Number.isFinite(value)) {
+		return undefined;
 	}
-	if (messageSuggestsSingleTarget(latestUserMessage)) {
-		return 1;
-	}
-	return undefined;
+	return Math.max(1, Math.floor(value));
 }
 
-function coerceExecutableQuery({
+function normalizeExecutableQuery({
 	kind,
-	latestUserMessage,
 	plannedQuery
 }: {
 	kind: 'count' | 'view_update';
-	latestUserMessage: string;
 	plannedQuery?: CatalogQuerySpec;
-}): CatalogQuerySpec {
-	const defaultMode = inferViewMode(latestUserMessage);
-	const expectedQueryType = kind === 'count' ? 'count' : 'select';
-	const plannedMode =
-		kind === 'view_update'
-			? plannedQuery?.mode === 'add' || plannedQuery?.mode === 'remove'
-				? plannedQuery.mode
-				: plannedQuery?.mode === 'replace'
-					? 'replace'
-					: defaultMode
-			: 'replace';
-	const resolvedLimit =
-		kind === 'view_update'
-			? inferSelectLimit({
-					latestUserMessage,
-					plannedLimit: plannedQuery?.limit
-				})
-			: undefined;
-
+}): CatalogQuerySpec | null {
 	if (!plannedQuery || !Array.isArray(plannedQuery.filters)) {
-		const heuristic = buildHeuristicQuery(latestUserMessage, expectedQueryType, defaultMode);
-		return kind === 'view_update'
-			? {
-					...heuristic,
-					mode: plannedMode,
-					limit: resolvedLimit
-				}
-			: heuristic;
+		return null;
 	}
-
+	const expectedQueryType = kind === 'count' ? 'count' : 'select';
+	if (plannedQuery.queryType !== expectedQueryType) {
+		return null;
+	}
 	return {
 		queryType: expectedQueryType,
-		mode: plannedMode,
-		limit: resolvedLimit,
+		mode:
+			kind === 'view_update' &&
+			(plannedQuery.mode === 'add' ||
+				plannedQuery.mode === 'remove' ||
+				plannedQuery.mode === 'replace')
+				? plannedQuery.mode
+				: 'replace',
+		limit: kind === 'view_update' ? normalizeLimit(plannedQuery.limit) : undefined,
 		filters: plannedQuery.filters
 	};
 }
@@ -288,7 +179,6 @@ export async function runAssist(
 	const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 	const model = env.OPENAI_ASSIST_MODEL || 'gpt-5-mini';
 	const sceneContext = normalizeSceneContext(body.sceneContext);
-	const latestUserMessage = getLatestUserMessage(body.messages);
 	const logger = createLogger('assist.executor', {
 		requestId: options?.requestId ?? 'unknown',
 		model
@@ -349,11 +239,20 @@ export async function runAssist(
 		};
 	}
 
-	const executableQuery = coerceExecutableQuery({
+	const executableQuery = normalizeExecutableQuery({
 		kind: plan.kind,
-		latestUserMessage,
 		plannedQuery: plan.query
 	});
+	if (!executableQuery) {
+		logger.warn('assist execution blocked: planner did not provide a valid executable query', {
+			kind: plan.kind
+		});
+		return {
+			assistantMessage:
+				'I could not execute that because no valid structured query was provided. Please restate your request with explicit filters.\nNo scene change was applied.',
+			action: null
+		};
+	}
 	logger.info('assist query prepared', {
 		kind: plan.kind,
 		queryType: executableQuery.queryType,
@@ -391,40 +290,15 @@ export async function runAssist(
 		};
 	}
 
-	let disambiguationPrefix: string | null = null;
-	const singleTargetExpected = expectsSingleTarget(latestUserMessage, executableQuery);
-	if (singleTargetExpected && queryResult.totalCount === 0) {
-		logger.info('assist scene action blocked: no matches for single-target request');
+	if (executableQuery.limit === 1 && queryResult.totalCount !== 1) {
+		logger.warn('assist scene action blocked: planner single-target constraint not satisfied', {
+			totalCount: queryResult.totalCount,
+			filterSummary: queryResult.filterSummary
+		});
 		return {
-			assistantMessage:
-				'I could not find a unique object for that single-target request.\nNo scene change was applied.',
+			assistantMessage: buildPlannerSingleTargetConflictMessage(queryResult),
 			action: null
 		};
-	}
-	if (singleTargetExpected && queryResult.totalCount > 1) {
-		const primaryNeedle = getPrimaryObjectNameContainsNeedle(executableQuery);
-		const confidentMatch =
-			primaryNeedle !== null && hasConfidentSingleMatch(queryResult, primaryNeedle);
-		if (!confidentMatch) {
-			logger.warn('assist scene action blocked: ambiguous single-target request', {
-				totalCount: queryResult.totalCount,
-				filterSummary: queryResult.filterSummary
-			});
-			return {
-				assistantMessage: buildAmbiguousSingleTargetMessage(queryResult),
-				action: null
-			};
-		}
-		const selected = queryResult.sample.find(
-			(row) => row.noradCatId === queryResult.noradCatIds[0]
-		);
-		if (selected) {
-			disambiguationPrefix = `Interpreted your request as ${selected.objectName} (${selected.noradCatId}) from ${queryResult.totalCount} partial matches.`;
-		}
-		logger.info('assist single-target request auto-disambiguated', {
-			totalCount: queryResult.totalCount,
-			selectedNoradId: queryResult.noradCatIds[0]
-		});
 	}
 
 	logger.info('assist execution finished with scene action', {
@@ -433,10 +307,7 @@ export async function runAssist(
 	});
 	const viewUpdateMessage = buildViewUpdateMessage(queryResult);
 	return {
-		assistantMessage:
-			disambiguationPrefix === null
-				? viewUpdateMessage
-				: `${disambiguationPrefix}\n${viewUpdateMessage}`,
+		assistantMessage: viewUpdateMessage,
 		action: {
 			mode: queryResult.mode,
 			noradCatIds: queryResult.noradCatIds,

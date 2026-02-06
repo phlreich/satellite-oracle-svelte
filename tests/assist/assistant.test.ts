@@ -62,7 +62,7 @@ describe('runAssist planner/executor behavior', () => {
 
 		const result = await runAssist({
 			messages: [{ role: 'user', content: 'how many german payload objects are there?' }],
-			sceneContext: { visibleNoradIds: [25544], visibleCount: 250 }
+			sceneContext: { visibleCount: 250 }
 		});
 
 		expect(result.action).toBeNull();
@@ -90,7 +90,7 @@ describe('runAssist planner/executor behavior', () => {
 
 		const result = await runAssist({
 			messages: [{ role: 'user', content: 'show all starlink satellites' }],
-			sceneContext: { visibleNoradIds: [25544], visibleCount: 250 }
+			sceneContext: { visibleCount: 250 }
 		});
 
 		expect(result.action).not.toBeNull();
@@ -109,7 +109,7 @@ describe('runAssist planner/executor behavior', () => {
 
 		const result = await runAssist({
 			messages: [{ role: 'user', content: 'why is this orbit so high up?' }],
-			sceneContext: { selectedNoradId: 25544, visibleNoradIds: [25544], visibleCount: 1 }
+			sceneContext: { selectedNoradId: 25544, visibleCount: 1 }
 		});
 
 		expect(result.action).toBeNull();
@@ -135,18 +135,16 @@ describe('runAssist planner/executor behavior', () => {
 		});
 
 		expect(result.action).toBeNull();
-		expect(result.assistantMessage).toContain('did not change the scene');
+		expect(result.assistantMessage).toContain('No scene change was applied.');
 		expect(result.assistantMessage).toContain('Closest matches:');
 	});
 
-	it('auto-disambiguates single-target matches when exactly one strong candidate exists', async () => {
+	it('blocks execution when planner query shape is invalid', async () => {
 		createMock.mockResolvedValueOnce(
 			plannerResponse('resp_plan_6', {
 				kind: 'view_update',
 				query: {
-					queryType: 'select',
-					mode: 'replace',
-					limit: 1,
+					queryType: 'count',
 					filters: [{ field: 'object_name', op: 'contains', value: 'iss' }]
 				}
 			})
@@ -156,9 +154,8 @@ describe('runAssist planner/executor behavior', () => {
 			messages: [{ role: 'user', content: 'show me the iss' }]
 		});
 
-		expect(result.action).not.toBeNull();
-		expect(result.action?.returnedCount).toBe(1);
-		expect(result.assistantMessage).toContain('Interpreted your request as');
+		expect(result.action).toBeNull();
+		expect(result.assistantMessage).toContain('no valid structured query');
 	});
 
 	it('does not cap replace updates when planner omits limit', async () => {
@@ -175,11 +172,26 @@ describe('runAssist planner/executor behavior', () => {
 
 		const result = await runAssist({
 			messages: [{ role: 'user', content: 'show all starlink satellites' }],
-			sceneContext: { visibleNoradIds: [25544], visibleCount: 31865 }
+			sceneContext: { visibleCount: 31865 }
 		});
 
 		expect(result.action).not.toBeNull();
 		expect(result.action?.returnedCount).toBeGreaterThan(2500);
 		expect(result.action?.returnedCount).toBe(result.action?.totalCount);
+	});
+
+	it('falls back to clarify when planner returns no function call output', async () => {
+		createMock.mockResolvedValueOnce({
+			id: 'resp_plan_8',
+			output: [],
+			output_text: ''
+		});
+
+		const result = await runAssist({
+			messages: [{ role: 'user', content: 'show all starlink satellites' }]
+		});
+
+		expect(result.action).toBeNull();
+		expect(result.assistantMessage).toContain('I need a clearer request');
 	});
 });

@@ -15,6 +15,9 @@ export type AssistPlan = {
 	question?: string;
 };
 
+const CLARIFY_FALLBACK_QUESTION =
+	'I need a clearer request. Tell me what to filter, count, add, or remove.';
+
 const PLANNER_TOOL: FunctionTool = {
 	type: 'function',
 	name: 'propose_assist_plan',
@@ -144,132 +147,11 @@ function normalizePlan(candidate: Record<string, unknown> | null): AssistPlan | 
 	};
 }
 
-export function inferViewMode(message: string): 'replace' | 'add' | 'remove' {
-	const latest = message.toLowerCase();
-	if (/\badd|include|also show|plus\b/.test(latest)) {
-		return 'add';
-	}
-	if (/\bhide|remove|exclude|subtract\b/.test(latest)) {
-		return 'remove';
-	}
-	return 'replace';
-}
-
-function maybePushYearFilter(
-	latest: string,
-	filters: CatalogQuerySpec['filters'],
-	op: 'lt' | 'gt',
-	pattern: RegExp
-) {
-	const match = latest.match(pattern);
-	if (!match) {
-		return;
-	}
-	const yearText = match[0].match(/(19|20)\d{2}/)?.[0];
-	if (!yearText) {
-		return;
-	}
-	filters.push({
-		field: 'launch_year',
-		op,
-		value: Number(yearText)
-	});
-}
-
-export function buildHeuristicQuery(
-	latestMessage: string,
-	queryType: 'count' | 'select',
-	mode: 'replace' | 'add' | 'remove'
-): CatalogQuerySpec {
-	const latest = latestMessage.toLowerCase();
-	const filters: CatalogQuerySpec['filters'] = [];
-
-	if (/\bstarlink\b/.test(latest)) {
-		filters.push({ field: 'object_name', op: 'contains', value: 'starlink' });
-	}
-
-	if (/\bdebris\b/.test(latest)) {
-		filters.push({ field: 'object_type', op: 'eq', value: 'debris' });
-	}
-	if (/\bpayload|satellite(s)?\b/.test(latest)) {
-		filters.push({ field: 'object_type', op: 'eq', value: 'payload' });
-	}
-	if (/\brocket body|rocket|booster\b/.test(latest)) {
-		filters.push({ field: 'object_type', op: 'eq', value: 'rocket body' });
-	}
-
-	if (/\bgerman|germany|deutsch\b/.test(latest)) {
-		filters.push({ field: 'country_code', op: 'eq', value: 'germany' });
-	} else if (/\bamerican|united states|usa|u\.s\.\b/.test(latest)) {
-		filters.push({ field: 'country_code', op: 'eq', value: 'usa' });
-	} else if (/\bchinese|china\b/.test(latest)) {
-		filters.push({ field: 'country_code', op: 'eq', value: 'china' });
-	} else if (/\brussian|russia\b/.test(latest)) {
-		filters.push({ field: 'country_code', op: 'eq', value: 'russia' });
-	}
-
-	if (/\bleo|low earth orbit\b/.test(latest)) {
-		filters.push({ field: 'orbit_class', op: 'eq', value: 'LEO' });
-	} else if (/\bmeo|medium earth orbit\b/.test(latest)) {
-		filters.push({ field: 'orbit_class', op: 'eq', value: 'MEO' });
-	} else if (/\bgeo|geostationary\b/.test(latest)) {
-		filters.push({ field: 'orbit_class', op: 'eq', value: 'GEO' });
-	} else if (/\bheo|high earth orbit\b/.test(latest)) {
-		filters.push({ field: 'orbit_class', op: 'eq', value: 'HEO' });
-	}
-
-	maybePushYearFilter(latest, filters, 'lt', /\b(before|pre)\s+(19|20)\d{2}\b/);
-	maybePushYearFilter(latest, filters, 'gt', /\b(after|since|post)\s+(19|20)\d{2}\b/);
-
-	return {
-		queryType,
-		mode,
-		limit: undefined,
-		filters
-	};
-}
-
-export function buildFallbackPlan(messages: AssistRequestBody['messages']): AssistPlan {
-	const latest =
-		messages
-			.slice()
-			.reverse()
-			.find((message) => message.role === 'user')
-			?.content.toLowerCase() ?? '';
-	const hasViewVerb =
-		/\bshow|display|hide|highlight|focus|draw|plot|visuali[sz]e|filter|remove|add|select\b/.test(
-			latest
-		);
-	const isCount = /\bhow many|count|number of|total\b/.test(latest);
-	const isExplain = /\bwhy|explain|what does|what is|how high|how low\b/.test(latest);
-
-	if (isCount && !hasViewVerb) {
-		return {
-			kind: 'count',
-			query: buildHeuristicQuery(latest, 'count', 'replace')
-		};
-	}
-	if (hasViewVerb) {
-		const mode = inferViewMode(latest);
-		return {
-			kind: 'view_update',
-			query: buildHeuristicQuery(latest, 'select', mode)
-		};
-	}
-	if (isExplain) {
-		return { kind: 'explain_selected' };
-	}
-	return { kind: 'clarify', question: 'What would you like me to filter or count?' };
-}
-
 function normalizeSceneContext(sceneContext?: SceneContext) {
-	const visibleNoradIds = Array.isArray(sceneContext?.visibleNoradIds)
-		? sceneContext.visibleNoradIds.filter((value) => Number.isInteger(value)).slice(0, 250)
-		: [];
 	const visibleCount =
 		typeof sceneContext?.visibleCount === 'number' && Number.isFinite(sceneContext.visibleCount)
 			? Math.max(0, Math.floor(sceneContext.visibleCount))
-			: visibleNoradIds.length;
+			: 0;
 
 	return {
 		selectedNoradId:
@@ -277,12 +159,7 @@ function normalizeSceneContext(sceneContext?: SceneContext) {
 			Number.isInteger(sceneContext.selectedNoradId)
 				? sceneContext.selectedNoradId
 				: null,
-		visibleNoradIds,
-		visibleCount,
-		timestamp:
-			typeof sceneContext?.timestamp === 'string' && sceneContext.timestamp.trim() !== ''
-				? sceneContext.timestamp
-				: new Date().toISOString()
+		visibleCount
 	};
 }
 
@@ -336,7 +213,7 @@ export async function planAssistTurn({
 	}
 
 	const parsedPlan = normalizePlan(extractPlannedArguments(response));
-	const plan = parsedPlan ?? buildFallbackPlan(body.messages);
+	const plan = parsedPlan ?? { kind: 'clarify', question: CLARIFY_FALLBACK_QUESTION };
 	logger.info('planner request completed', {
 		responseId: response.id ?? null,
 		usedFallbackPlan: parsedPlan === null,

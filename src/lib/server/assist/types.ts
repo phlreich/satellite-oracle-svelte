@@ -9,9 +9,7 @@ export type AssistSelectionMode = 'replace' | 'add' | 'remove';
 
 export type SceneContext = {
 	selectedNoradId?: number | null;
-	visibleNoradIds?: number[];
 	visibleCount?: number;
-	timestamp?: string;
 };
 
 export type AssistRequestBody = {

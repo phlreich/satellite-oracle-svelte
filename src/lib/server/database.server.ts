@@ -10,7 +10,6 @@ import { promisify } from 'util';
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
 import { env } from '$env/dynamic/private';
-import { setCache } from './cache.js';
 import { createLogger, serializeError } from './logger';
 
 const DB_PATH = path.join(process.cwd(), 'src/data/satellite.db');
@@ -152,7 +151,6 @@ export async function initializeDatabaseAndSetCache() {
 		await deleteUnusedRows();
 		await checkpoint();
 		const sceneData = await getSceneData();
-		setCache(sceneData);
 		await writeSceneDataArtifacts(sceneData);
 		dbLogger.info('database initialization completed', {
 			durationMs: Date.now() - startTime,
@@ -499,7 +497,6 @@ export async function refreshData() {
 	await updateGP();
 	await deleteUnusedRows();
 	const sceneData = await getSceneData();
-	setCache(sceneData);
 	await writeSceneDataArtifacts(sceneData);
 	await checkpoint();
 	const endTime = new Date().getTime();

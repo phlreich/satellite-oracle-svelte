@@ -18,10 +18,7 @@ const db = new Database(DB_PATH, { readonly: true, fileMustExist: true });
 db.pragma('busy_timeout = 5000');
 const queryLogger = createLogger('assist.query-runtime');
 
-type DataSource = 'catalog_v2' | 'legacy';
-
 type SourceConfig = {
-	source: DataSource;
 	fromSql: string;
 	fieldSql: Record<CatalogFilterField, string>;
 	selectSql: string;
@@ -34,13 +31,6 @@ type SourceConfig = {
 	};
 	noradOrderSql: string;
 };
-
-function tableExists(tableName: string): boolean {
-	const row = db
-		.prepare("SELECT 1 as ok FROM sqlite_master WHERE type='table' AND name = @tableName LIMIT 1")
-		.get({ tableName }) as { ok?: number } | undefined;
-	return row?.ok === 1;
-}
 
 function buildOrbitClassSql({
 	apogee,
@@ -64,136 +54,66 @@ CASE
 END`;
 }
 
-const CATALOG_ORBIT_CLASS_SQL = buildOrbitClassSql({
-	apogee: 'catalog_v2.apogee_km',
-	period: 'catalog_v2.period_minutes',
-	inclination: 'catalog_v2.inclination_deg'
-});
-
-const LEGACY_ORBIT_CLASS_SQL = buildOrbitClassSql({
+const ORBIT_CLASS_SQL = buildOrbitClassSql({
 	apogee: 'gp.APOAPSIS',
 	period: 'COALESCE(gp.PERIOD, satcat.PERIOD)',
 	inclination: 'COALESCE(gp.INCLINATION, satcat.INCLINATION)'
 });
 
-function buildSourceConfig(): SourceConfig {
-	if (tableExists('catalog_v2')) {
-		return {
-			source: 'catalog_v2',
-			fromSql: 'FROM catalog_v2',
-			fieldSql: {
-				norad_cat_id: 'catalog_v2.norad_cat_id',
-				object_name: "COALESCE(catalog_v2.object_name, '')",
-				object_type: "UPPER(COALESCE(catalog_v2.object_type, ''))",
-				country_code: "UPPER(COALESCE(catalog_v2.country_code, ''))",
-				launch_year: 'catalog_v2.launch_year',
-				apogee_km: 'catalog_v2.apogee_km',
-				perigee_km: 'catalog_v2.perigee_km',
-				period_minutes: 'catalog_v2.period_minutes',
-				inclination_deg: 'catalog_v2.inclination_deg',
-				orbit_class: CATALOG_ORBIT_CLASS_SQL,
-				site: "UPPER(COALESCE(catalog_v2.site, ''))",
-				rcs_size: "UPPER(COALESCE(catalog_v2.rcs_size, ''))"
-			},
-			selectSql: `SELECT
-				catalog_v2.norad_cat_id as norad_cat_id,
-				COALESCE(catalog_v2.object_name, '') as object_name,
-				UPPER(COALESCE(catalog_v2.object_type, '')) as object_type,
-				UPPER(COALESCE(catalog_v2.country_code, '')) as country_code,
-				catalog_v2.launch_year as launch_year,
-				catalog_v2.apogee_km as apogee_km,
-				catalog_v2.perigee_km as perigee_km,
-				catalog_v2.period_minutes as period_minutes,
-				catalog_v2.inclination_deg as inclination_deg,
-				${CATALOG_ORBIT_CLASS_SQL} as orbit_class,
-				catalog_v2.site as site,
-				catalog_v2.rcs_size as rcs_size`,
-			detailSql: `SELECT
-				catalog_v2.norad_cat_id as norad_cat_id,
-				COALESCE(catalog_v2.object_name, '') as object_name,
-				UPPER(COALESCE(catalog_v2.object_type, '')) as object_type,
-				UPPER(COALESCE(catalog_v2.country_code, '')) as country_code,
-				catalog_v2.launch_year as launch_year,
-				catalog_v2.apogee_km as apogee_km,
-				catalog_v2.perigee_km as perigee_km,
-				catalog_v2.period_minutes as period_minutes,
-				catalog_v2.inclination_deg as inclination_deg,
-				${CATALOG_ORBIT_CLASS_SQL} as orbit_class,
-				catalog_v2.site as site,
-				catalog_v2.rcs_size as rcs_size,
-				catalog_v2.epoch as epoch,
-				catalog_v2.tle_line1 as tle_line1,
-				catalog_v2.tle_line2 as tle_line2`,
-			facetSql: {
-				objectType: "UPPER(COALESCE(catalog_v2.object_type, ''))",
-				countryCode: "UPPER(COALESCE(catalog_v2.country_code, ''))",
-				orbitClass: CATALOG_ORBIT_CLASS_SQL,
-				launchYear: 'CAST(catalog_v2.launch_year as TEXT)'
-			},
-			noradOrderSql: 'catalog_v2.norad_cat_id'
-		};
-	}
-
-	return {
-		source: 'legacy',
-		fromSql: 'FROM gp INNER JOIN satcat ON satcat.NORAD_CAT_ID = gp.NORAD_CAT_ID',
-		fieldSql: {
-			norad_cat_id: 'gp.NORAD_CAT_ID',
-			object_name: "COALESCE(NULLIF(satcat.OBJECT_NAME, ''), gp.OBJECT_NAME, '')",
-			object_type: "UPPER(COALESCE(NULLIF(satcat.OBJECT_TYPE, ''), gp.OBJECT_TYPE, ''))",
-			country_code: "UPPER(COALESCE(NULLIF(gp.COUNTRY_CODE, ''), satcat.COUNTRY, ''))",
-			launch_year: "CAST(strftime('%Y', COALESCE(gp.LAUNCH_DATE, satcat.LAUNCH)) AS INTEGER)",
-			apogee_km: 'gp.APOAPSIS',
-			perigee_km: 'gp.PERIAPSIS',
-			period_minutes: 'COALESCE(gp.PERIOD, satcat.PERIOD)',
-			inclination_deg: 'COALESCE(gp.INCLINATION, satcat.INCLINATION)',
-			orbit_class: LEGACY_ORBIT_CLASS_SQL,
-			site: "UPPER(COALESCE(NULLIF(gp.SITE, ''), satcat.SITE, ''))",
-			rcs_size: "UPPER(COALESCE(NULLIF(gp.RCS_SIZE, ''), satcat.RCS_SIZE, ''))"
-		},
-		selectSql: `SELECT
-			gp.NORAD_CAT_ID as norad_cat_id,
-			COALESCE(NULLIF(satcat.OBJECT_NAME, ''), gp.OBJECT_NAME, '') as object_name,
-			UPPER(COALESCE(NULLIF(satcat.OBJECT_TYPE, ''), gp.OBJECT_TYPE, '')) as object_type,
-			UPPER(COALESCE(NULLIF(gp.COUNTRY_CODE, ''), satcat.COUNTRY, '')) as country_code,
-			CAST(strftime('%Y', COALESCE(gp.LAUNCH_DATE, satcat.LAUNCH)) AS INTEGER) as launch_year,
-			gp.APOAPSIS as apogee_km,
-			gp.PERIAPSIS as perigee_km,
-			COALESCE(gp.PERIOD, satcat.PERIOD) as period_minutes,
-			COALESCE(gp.INCLINATION, satcat.INCLINATION) as inclination_deg,
-			${LEGACY_ORBIT_CLASS_SQL} as orbit_class,
-			COALESCE(NULLIF(gp.SITE, ''), satcat.SITE, '') as site,
-			COALESCE(NULLIF(gp.RCS_SIZE, ''), satcat.RCS_SIZE, '') as rcs_size`,
-		detailSql: `SELECT
-			gp.NORAD_CAT_ID as norad_cat_id,
-			COALESCE(NULLIF(satcat.OBJECT_NAME, ''), gp.OBJECT_NAME, '') as object_name,
-			UPPER(COALESCE(NULLIF(satcat.OBJECT_TYPE, ''), gp.OBJECT_TYPE, '')) as object_type,
-			UPPER(COALESCE(NULLIF(gp.COUNTRY_CODE, ''), satcat.COUNTRY, '')) as country_code,
-			CAST(strftime('%Y', COALESCE(gp.LAUNCH_DATE, satcat.LAUNCH)) AS INTEGER) as launch_year,
-			gp.APOAPSIS as apogee_km,
-			gp.PERIAPSIS as perigee_km,
-			COALESCE(gp.PERIOD, satcat.PERIOD) as period_minutes,
-			COALESCE(gp.INCLINATION, satcat.INCLINATION) as inclination_deg,
-			${LEGACY_ORBIT_CLASS_SQL} as orbit_class,
-			COALESCE(NULLIF(gp.SITE, ''), satcat.SITE, '') as site,
-			COALESCE(NULLIF(gp.RCS_SIZE, ''), satcat.RCS_SIZE, '') as rcs_size,
-			gp.EPOCH as epoch,
-			gp.TLE_LINE1 as tle_line1,
-			gp.TLE_LINE2 as tle_line2`,
-		facetSql: {
-			objectType: "UPPER(COALESCE(NULLIF(satcat.OBJECT_TYPE, ''), gp.OBJECT_TYPE, ''))",
-			countryCode: "UPPER(COALESCE(NULLIF(gp.COUNTRY_CODE, ''), satcat.COUNTRY, ''))",
-			orbitClass: LEGACY_ORBIT_CLASS_SQL,
-			launchYear: "CAST(strftime('%Y', COALESCE(gp.LAUNCH_DATE, satcat.LAUNCH)) AS TEXT)"
-		},
-		noradOrderSql: 'gp.NORAD_CAT_ID'
-	};
-}
-
-const SOURCE = buildSourceConfig();
-queryLogger.info('query runtime initialized', {
-	dataSource: SOURCE.source
-});
+const SOURCE: SourceConfig = {
+	fromSql: 'FROM gp INNER JOIN satcat ON satcat.NORAD_CAT_ID = gp.NORAD_CAT_ID',
+	fieldSql: {
+		norad_cat_id: 'gp.NORAD_CAT_ID',
+		object_name: "COALESCE(NULLIF(satcat.OBJECT_NAME, ''), gp.OBJECT_NAME, '')",
+		object_type: "UPPER(COALESCE(NULLIF(satcat.OBJECT_TYPE, ''), gp.OBJECT_TYPE, ''))",
+		country_code: "UPPER(COALESCE(NULLIF(gp.COUNTRY_CODE, ''), satcat.COUNTRY, ''))",
+		launch_year: "CAST(strftime('%Y', COALESCE(gp.LAUNCH_DATE, satcat.LAUNCH)) AS INTEGER)",
+		apogee_km: 'gp.APOAPSIS',
+		perigee_km: 'gp.PERIAPSIS',
+		period_minutes: 'COALESCE(gp.PERIOD, satcat.PERIOD)',
+		inclination_deg: 'COALESCE(gp.INCLINATION, satcat.INCLINATION)',
+		orbit_class: ORBIT_CLASS_SQL,
+		site: "UPPER(COALESCE(NULLIF(gp.SITE, ''), satcat.SITE, ''))",
+		rcs_size: "UPPER(COALESCE(NULLIF(gp.RCS_SIZE, ''), satcat.RCS_SIZE, ''))"
+	},
+	selectSql: `SELECT
+		gp.NORAD_CAT_ID as norad_cat_id,
+		COALESCE(NULLIF(satcat.OBJECT_NAME, ''), gp.OBJECT_NAME, '') as object_name,
+		UPPER(COALESCE(NULLIF(satcat.OBJECT_TYPE, ''), gp.OBJECT_TYPE, '')) as object_type,
+		UPPER(COALESCE(NULLIF(gp.COUNTRY_CODE, ''), satcat.COUNTRY, '')) as country_code,
+		CAST(strftime('%Y', COALESCE(gp.LAUNCH_DATE, satcat.LAUNCH)) AS INTEGER) as launch_year,
+		gp.APOAPSIS as apogee_km,
+		gp.PERIAPSIS as perigee_km,
+		COALESCE(gp.PERIOD, satcat.PERIOD) as period_minutes,
+		COALESCE(gp.INCLINATION, satcat.INCLINATION) as inclination_deg,
+		${ORBIT_CLASS_SQL} as orbit_class,
+		COALESCE(NULLIF(gp.SITE, ''), satcat.SITE, '') as site,
+		COALESCE(NULLIF(gp.RCS_SIZE, ''), satcat.RCS_SIZE, '') as rcs_size`,
+	detailSql: `SELECT
+		gp.NORAD_CAT_ID as norad_cat_id,
+		COALESCE(NULLIF(satcat.OBJECT_NAME, ''), gp.OBJECT_NAME, '') as object_name,
+		UPPER(COALESCE(NULLIF(satcat.OBJECT_TYPE, ''), gp.OBJECT_TYPE, '')) as object_type,
+		UPPER(COALESCE(NULLIF(gp.COUNTRY_CODE, ''), satcat.COUNTRY, '')) as country_code,
+		CAST(strftime('%Y', COALESCE(gp.LAUNCH_DATE, satcat.LAUNCH)) AS INTEGER) as launch_year,
+		gp.APOAPSIS as apogee_km,
+		gp.PERIAPSIS as perigee_km,
+		COALESCE(gp.PERIOD, satcat.PERIOD) as period_minutes,
+		COALESCE(gp.INCLINATION, satcat.INCLINATION) as inclination_deg,
+		${ORBIT_CLASS_SQL} as orbit_class,
+		COALESCE(NULLIF(gp.SITE, ''), satcat.SITE, '') as site,
+		COALESCE(NULLIF(gp.RCS_SIZE, ''), satcat.RCS_SIZE, '') as rcs_size,
+		gp.EPOCH as epoch,
+		gp.TLE_LINE1 as tle_line1,
+		gp.TLE_LINE2 as tle_line2`,
+	facetSql: {
+		objectType: "UPPER(COALESCE(NULLIF(satcat.OBJECT_TYPE, ''), gp.OBJECT_TYPE, ''))",
+		countryCode: "UPPER(COALESCE(NULLIF(gp.COUNTRY_CODE, ''), satcat.COUNTRY, ''))",
+		orbitClass: ORBIT_CLASS_SQL,
+		launchYear: "CAST(strftime('%Y', COALESCE(gp.LAUNCH_DATE, satcat.LAUNCH)) AS TEXT)"
+	},
+	noradOrderSql: 'gp.NORAD_CAT_ID'
+};
+queryLogger.info('query runtime initialized');
 
 const COUNTRY_ALIASES: Record<string, string[]> = {
 	german: ['GER'],
@@ -630,7 +550,6 @@ export function runCatalogQuery(rawSpec: unknown): CatalogQueryResult {
 	}
 	const filters = validateFilters(spec.filters ?? []);
 	queryLogger.debug('catalog query received', {
-		dataSource: SOURCE.source,
 		queryType,
 		mode,
 		limit: explicitLimit ?? null,
@@ -647,7 +566,6 @@ export function runCatalogQuery(rawSpec: unknown): CatalogQueryResult {
 
 	if (queryType === 'count') {
 		queryLogger.info('catalog query completed', {
-			dataSource: SOURCE.source,
 			queryType,
 			totalCount,
 			durationMs: Date.now() - startedAt
@@ -719,7 +637,6 @@ export function runCatalogQuery(rawSpec: unknown): CatalogQueryResult {
 		rcsSize: row.rcs_size
 	}));
 	queryLogger.info('catalog query completed', {
-		dataSource: SOURCE.source,
 		queryType,
 		mode,
 		totalCount,
@@ -746,16 +663,11 @@ export function getObjectDetails(noradCatId: number): ObjectDetails | null {
 		throw new Error('norad_cat_id must be a positive integer');
 	}
 
-	const whereNoradSql =
-		SOURCE.source === 'catalog_v2'
-			? 'catalog_v2.norad_cat_id = @noradCatId'
-			: 'gp.NORAD_CAT_ID = @noradCatId';
-
 	const row = db
 		.prepare(
 			`${SOURCE.detailSql}
 			${SOURCE.fromSql}
-			WHERE ${whereNoradSql}
+			WHERE gp.NORAD_CAT_ID = @noradCatId
 			LIMIT 1`
 		)
 		.get({ noradCatId }) as
@@ -780,7 +692,6 @@ export function getObjectDetails(noradCatId: number): ObjectDetails | null {
 
 	if (!row) {
 		queryLogger.warn('object details not found', {
-			dataSource: SOURCE.source,
 			noradCatId,
 			durationMs: Date.now() - startedAt
 		});
@@ -805,7 +716,6 @@ export function getObjectDetails(noradCatId: number): ObjectDetails | null {
 		tleLine2: row.tle_line2
 	};
 	queryLogger.info('object details fetched', {
-		dataSource: SOURCE.source,
 		noradCatId: result.noradCatId,
 		orbitClass: result.orbitClass,
 		durationMs: Date.now() - startedAt

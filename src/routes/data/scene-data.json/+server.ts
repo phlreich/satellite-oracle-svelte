@@ -1,8 +1,6 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { json } from '@sveltejs/kit';
-import { getCache, setCache } from '$lib/server/cache';
-import { getSceneData } from '$lib/server/database.server';
 import type { RequestHandler } from './$types';
 
 const SCENE_DATA_PATH = path.join(process.cwd(), 'src/data/scene-data.json');
@@ -16,23 +14,10 @@ export const GET: RequestHandler = async () => {
 				'cache-control': 'public, max-age=300'
 			}
 		});
-	} catch {
-		// Fallback used in dev startup races before artifacts are generated.
-		const cache = getCache();
-		if (cache.sceneData) {
-			return json(cache.sceneData, {
-				headers: {
-					'cache-control': 'no-store'
-				}
-			});
-		}
-
-		const sceneData = await getSceneData();
-		setCache(sceneData);
-		return json(sceneData, {
-			headers: {
-				'cache-control': 'no-store'
-			}
-		});
+	} catch (error) {
+		return json(
+			{ error: 'Scene data artifact not available', details: String(error) },
+			{ status: 503 }
+		);
 	}
 };
