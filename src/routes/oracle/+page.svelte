@@ -91,26 +91,34 @@
 	let cleanup: (() => void) | undefined;
 	let focusPreviousVisibleSatellite = () => {};
 	let focusNextVisibleSatellite = () => {};
+	let getVisibleNoradIdsSample = (_limit = 250): number[] => [];
+	let getVisibleCount = () => 0;
 
-	interface UserMessage {
-		role: 'user';
-		content: string | null;
-	}
-
-	interface ToolMessage {
-		role: 'tool';
-		content: string | null;
-		tool_call_id: string;
-	}
-
-	type Message = UserMessage | ToolMessage;
-	type SharedSceneData = [Array<{ NORAD_CAT_ID: number }>, 'show_objects' | 'draw_orbits'] | [];
+	type Message = {
+		role: 'user' | 'assistant';
+		content: string;
+	};
+	type SharedSceneIntent = 'show_objects' | 'draw_orbits' | 'add_objects' | 'remove_objects';
+	type SharedSceneData = [Array<{ NORAD_CAT_ID: number }>, SharedSceneIntent] | [];
 	type SceneDataRow = [string, string, string, number, string];
+	type AssistResponseBody = {
+		assistantMessage: string;
+		responseId: string | null;
+		action: {
+			mode: 'replace' | 'add' | 'remove';
+			noradCatIds: number[];
+			totalCount: number;
+			returnedCount: number;
+			filterSummary: string;
+		} | null;
+	};
 
 	const chatHistory = writable<Message[]>([]);
+	let previousResponseId: string | null = null;
 
 	function resetChat() {
 		chatHistory.set([]);
+		previousResponseId = null;
 	}
 
 	function getChatHistory() {
@@ -124,10 +132,11 @@
 	const selectedSatellite = writable<{
 		name: string;
 		details: object | string;
-		latitude: number;
-		longitude: number;
-		index: number;
-		satrec: SatRec;
+		noradCatId?: number;
+		latitude?: number;
+		longitude?: number;
+		index?: number;
+		satrec?: SatRec;
 	} | null>(null);
 	const inputValue = writable('');
 	let isMobileView = false;
@@ -167,6 +176,8 @@
 				cleanup = sceneController.cleanup;
 				focusPreviousVisibleSatellite = sceneController.focusPreviousVisibleSatellite;
 				focusNextVisibleSatellite = sceneController.focusNextVisibleSatellite;
+				getVisibleNoradIdsSample = sceneController.getVisibleNoradIdsSample;
+				getVisibleCount = sceneController.getVisibleCount;
 			} catch (error) {
 				console.error('Error initializing scene:', error);
 			} finally {
@@ -215,7 +226,7 @@
 	}
 
 	function updateLatLong() {
-		if ($selectedSatellite) {
+		if ($selectedSatellite?.satrec) {
 			const now = new Date();
 			const positionAndVelocity = propagate($selectedSatellite.satrec, now);
 			const positionEci = positionAndVelocity.position;
@@ -227,142 +238,83 @@
 		}
 	}
 
-	async function runQuery(query: string) {
-		try {
-			const response = await fetch(`${base}/api/query`, {
-				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json'
-				},
-				body: JSON.stringify({ query })
-			});
-
-			if (!response.ok) {
-				throw new Error(`HTTP error! Status: ${response.status}`);
-			}
-
-			const data = await response.json();
-			return data;
-		} catch (error) {
-			console.log('Error calling runQuery: ', error);
+	function mapModeToIntent(mode: 'replace' | 'add' | 'remove'): SharedSceneIntent {
+		if (mode === 'add') {
+			return 'add_objects';
 		}
+		if (mode === 'remove') {
+			return 'remove_objects';
+		}
+		return 'show_objects';
 	}
 
-	async function aiChat(chatHistory: Message[]) {
+	async function assistChat(history: Message[]) {
 		try {
-			const response = await fetch(`${base}/api/ai-chat`, {
+			const response = await fetch(`${base}/api/assist`, {
 				method: 'POST',
 				headers: {
 					'Content-Type': 'application/json'
 				},
-				body: JSON.stringify({ chatHistory })
+				body: JSON.stringify({
+					messages: history,
+					previousResponseId,
+					sceneContext: {
+						selectedNoradId: $selectedSatellite?.noradCatId ?? null,
+						visibleNoradIds: getVisibleNoradIdsSample(250),
+						visibleCount: getVisibleCount(),
+						timestamp: new Date().toISOString()
+					}
+				})
 			});
 
 			if (!response.ok) {
 				throw new Error(`HTTP error! Status: ${response.status}`);
 			}
 
-			return await response.json();
+			return (await response.json()) as AssistResponseBody;
 		} catch (error) {
-			console.error('Error calling aiChat: ', error);
+			console.error('Error calling assistChat: ', error);
 		}
 	}
 
 	async function handleKeyUp(event: { key: string }) {
-		if (
-			event.key === 'Enter' &&
-			(get(chatHistory).length === 0 || get(chatHistory).slice(-1)[0].role !== 'user')
-		) {
-			// console.log($inputValue);
-			let userChatInput = $inputValue;
-			chatHistory.update((history) => {
-				return [...history, { role: 'user', content: userChatInput }];
-			});
-			$inputValue = '';
-			await tick();
-			messageContainer.scrollTop = messageContainer.scrollHeight;
-			const result = await aiChat($chatHistory);
-			if (!result) return;
-			if (result.choices[0]) {
-				// (window as any).result = result;
-				chatHistory.update((history) => {
-					return [...history, result.choices[0].message];
-				});
-			}
-			// if it is a function call, run it and send the data to the scene
-			if (result.choices[0].message.tool_calls) {
-				const args = JSON.parse(result.choices[0].message.tool_calls[0].function.arguments);
-				// console.log('Query:', args.query);
-
-				let data = await runQuery(args.query);
-				data = JSON.parse(data);
-				// (window as any).data = data;
-
-				// if there is an error TODO: handle this better
-				if (data.code === 'SQLITE_ERROR') {
-					// console.error('Error running query: ', data.error);
-					chatHistory.update((history) => {
-						return [
-							...history,
-							{
-								role: 'tool',
-								content: 'Query failed, SQL error: ' + data.error_message,
-								tool_call_id: result.choices[0].message.tool_calls[0].id
-							}
-						];
-					});
-					await tick();
-					messageContainer.scrollTop = messageContainer.scrollHeight;
-					return;
-				}
-				if (data.code === 'NO_ROWS') {
-					// console.error('Error running query: ', data.error);
-					chatHistory.update((history) => {
-						return [
-							...history,
-							{
-								role: 'tool',
-								content: 'Query failed, no results found.',
-								tool_call_id: result.choices[0].message.tool_calls[0].id
-							}
-						];
-					});
-					await tick();
-					messageContainer.scrollTop = messageContainer.scrollHeight;
-					return;
-				}
-				if (data.code === 'SyntaxError') {
-					chatHistory.update((history) => {
-						return [
-							...history,
-							{
-								role: 'tool',
-								content: 'Query failed, syntax error: ' + data.error_message,
-								tool_call_id: result.choices[0].message.tool_calls[0].id
-							}
-						];
-					});
-					await tick();
-					messageContainer.scrollTop = messageContainer.scrollHeight;
-					return;
-				}
-				sharedData.set([data, args.intent]);
-				chatHistory.update((history) => {
-					return [
-						...history,
-						{
-							role: 'tool',
-							content: 'Query successful. ' + args.retranslation,
-							tool_call_id: result.choices[0].message.tool_calls[0].id
-						}
-					];
-				});
-			} else {
-				// TODO think about how to handle this
-			}
-			await tick();
-			messageContainer.scrollTop = messageContainer.scrollHeight;
+		if (event.key !== 'Enter') {
+			return;
 		}
+		const userChatInput = $inputValue.trim();
+		if (userChatInput.length === 0) {
+			return;
+		}
+
+		chatHistory.update((history) => {
+			return [...history, { role: 'user', content: userChatInput }];
+		});
+		$inputValue = '';
+		await tick();
+		messageContainer.scrollTop = messageContainer.scrollHeight;
+
+		const result = await assistChat(get(chatHistory));
+		if (!result) {
+			chatHistory.update((history) => {
+				return [...history, { role: 'assistant', content: 'Request failed. Please try again.' }];
+			});
+			await tick();
+			messageContainer.scrollTop = messageContainer.scrollHeight;
+			return;
+		}
+
+		previousResponseId = result.responseId;
+
+		if (result.action) {
+			const rows = result.action.noradCatIds.map((id) => ({ NORAD_CAT_ID: id }));
+			sharedData.set([rows, mapModeToIntent(result.action.mode)]);
+		}
+
+		chatHistory.update((history) => {
+			return [...history, { role: 'assistant', content: result.assistantMessage }];
+		});
+		await tick();
+		messageContainer.scrollTop = messageContainer.scrollHeight;
 	}
 </script>
 
