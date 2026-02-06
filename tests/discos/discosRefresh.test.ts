@@ -102,6 +102,12 @@ describe('discos refresh', () => {
 		await refreshDiscosData(db);
 
 		expect(fetchMock).toHaveBeenCalledTimes(1);
+		const calledUrl = String(fetchMock.mock.calls[0][0]);
+		expect(calledUrl).toContain('fields%5Bobject%5D=');
+		expect(calledUrl).toContain('launch%2Coperators%2Cstates');
+		expect(calledUrl).toContain('fields%5Blaunch%5D=');
+		expect(calledUrl).toContain('entities%2Cvehicle%2Csite');
+
 		const objectRow = db
 			.prepare(
 				'SELECT norad_cat_id, cospar_id, launch_cospar_no, launch_failure, launch_vehicle_name, launch_site_name FROM discos_objects'

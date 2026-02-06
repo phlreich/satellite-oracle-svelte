@@ -165,9 +165,9 @@ async function fetchObjectsPage({
 		params.set('include', 'launch,launch.entities,launch.vehicle,launch.site,operators,states');
 		params.set(
 			'fields[object]',
-			'satno,cosparId,name,objectClass,mass,mission,predDecayDate,active'
+			'satno,cosparId,name,objectClass,mass,mission,predDecayDate,active,launch,operators,states'
 		);
-		params.set('fields[launch]', 'epoch,flightNo,cosparLaunchNo,failure');
+		params.set('fields[launch]', 'epoch,flightNo,cosparLaunchNo,failure,entities,vehicle,site');
 		params.set('fields[vehicle]', 'name');
 		params.set('fields[launchSite]', 'name,latitude,longitude,altitude');
 		params.set('fields[country]', 'name');
