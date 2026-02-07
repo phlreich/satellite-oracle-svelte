@@ -2,8 +2,15 @@
 
 Last Updated: 2026-02-07
 
+## Bearings in 60 Seconds
+1. `git rev-parse --short HEAD` and `git status --short` to ground repo state.
+2. `npm run dev` and wait for startup logs to settle.
+3. Open `/satellite-oracle/oracle` and verify scene load + chat panel render.
+4. `ls -1t logs/dev-*.log | head -n 1` and tail the active log while testing.
+
 ## Core Commands
 - `npm run dev`
+- `npm run dev:raw`
 - `npm test`
 - `npm run check`
 - `npm run lint`
@@ -21,6 +28,12 @@ Last Updated: 2026-02-07
 3. Open the latest dev log and locate the request by `requestId`.
 4. Open `logs/assist/<timestamp>-<requestId>.md` for the compact readable timeline.
 5. Use dev log entries ending in `full` for raw OpenAI/tool payload fidelity.
+
+## UI Quick Checks
+- Pending assist shows one animated thinking line with a blinking cursor.
+- Input textarea is disabled while assist is pending.
+- If a focus target is hidden, UI tries add-then-focus once before reporting failure.
+- On mobile user agents, the chat window is currently hidden by design.
 
 ## Logging Controls
 - `LOG_LEVEL=debug` for max detail.
@@ -42,6 +55,7 @@ Last Updated: 2026-02-07
 - Latest assist trace: `ls -1t logs/assist/*.md | head -n 1`
 - Find one request: `rg "requestId\":\"<id>" logs/dev-*.log`
 - Find full payload entries: `rg " responses.create (request|response) full" logs/dev-*.log`
+- Find thinking indicator mentions in Oracle UI: `rg "thinking|assistPending" src/routes/oracle/+page.svelte`
 
 ## Deploy Loop
 - Container startup runs `node scripts/start-server-with-warmup.mjs` and performs internal warmup before external traffic.

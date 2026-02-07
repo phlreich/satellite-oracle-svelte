@@ -8,12 +8,19 @@ Repo: `/home/phlreich/satellite-oracle-svelte`
 - `07-notes-maintenance-protocol.md`
 
 ## Status Snapshot
-- Branch head is `97cb9d6`.
+- Branch head is `9bf52a0`.
 - `/api/assist` uses a direct multi-tool Responses loop.
 - Runtime supports SQL analysis + scene visibility updates + scene focus updates in one turn.
 - Dev logs now capture full assist payloads while `logs/assist/*.md` keeps readable compact traces.
 - Refresh now uses build-and-swap DB rotation (`satellite.next.db` -> `satellite.db`).
 - Dev startup skips rebuild/API refresh when live DB tables are already populated.
+- Oracle UI now uses monochrome industrial styling with a typed thinking-status indicator during pending assist.
+
+## Fast Bearings
+1. `git rev-parse --short HEAD` and `git status --short`.
+2. `npm run dev`.
+3. Load `/satellite-oracle/oracle`.
+4. Inspect latest log via `ls -1t logs/dev-*.log | head -n 1`.
 
 ## Read By Task
 - Architecture: `01-system-map.md`

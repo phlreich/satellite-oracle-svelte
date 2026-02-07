@@ -15,3 +15,6 @@ Last Updated: 2026-02-07
 - For better waiting feedback, run a loop: cursor-only pause, type phrase, hold, erase, then type the next phrase.
 - Keep loader and chat cursor cadence linked through a shared `--cursor-blink-duration` CSS variable and derive cursor-only delay from blink-count.
 - When a response arrives, request a graceful stop so thinking text finishes the current `typing` or `erasing` phase before disappearing.
+- `stopThinkingAnimationGracefully()` only defers during `typing`/`erasing`; if phase is `cursor`/`holding`, the indicator clears immediately.
+- The current Oracle mobile mode applies `.hidden` to the chat window (`isMobileView`), effectively disabling chat controls on mobile user agents.
+- Root route currently wraps the Oracle page directly (`src/routes/+page.svelte` imports `./oracle/+page.svelte`), so `/` and `/oracle` behavior is tightly coupled.

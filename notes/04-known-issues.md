@@ -3,11 +3,13 @@
 Last Updated: 2026-02-07
 
 - WSL screenshot automation can be misleading; trust manual browser checks.
+- Chat UI is hidden on mobile user agents (`isMobileView`), so mobile users currently lose assistant controls.
 - UI/scene integration test coverage is still limited.
 - Assist tool loops can run many SQL probes and increase per-request latency.
 - `sql_select` still stores result rows in-process per request round (now capped at 5000 rows).
 - SQLite SQL authorization currently relies on `node:sqlite`, which is still marked experimental in Node 24.
 - Assistant may still claim focus success even when a target NORAD cannot be added/focused; UI now appends a failure note when this occurs.
+- Thinking indicator can remain visible slightly after response arrival until typing/erasing phase completes.
 - Large visibility updates still send large NORAD ID arrays to the client.
 - Full assist tracing logs include raw messages, prompts, tool args, and SQL text.
 - Dev full assist logs now intentionally include raw OpenAI payloads and can expose sensitive text while growing quickly.

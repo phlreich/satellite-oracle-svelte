@@ -3,6 +3,8 @@
 Last Updated: 2026-02-07
 
 ## 2026-02-07
+- `9bf52a0` Add typewriter thinking indicator with shuffled status phrases, graceful stop, and shared loader/chat cursor cadence.
+- `66de02e` Restyle app and oracle UI to a stripped monochrome industrial look; simplify loading screen.
 - Fix scene visibility updates so hiding the selected satellite also removes its orbit track.
 - `97cb9d6` Add repository notes baseline (`notes/`) with current-truth, runbook, risks, and maintenance protocol.
 - `6234a6a` Add dual observability mode: full-fidelity dev logging for OpenAI/tool payloads and compact human-readable assist trace markdown output.

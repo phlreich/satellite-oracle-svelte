@@ -7,6 +7,7 @@ Last Updated: 2026-02-07
 - Model has direct access to read-only SQL via `sql_select`.
 - Scene mutation tools are explicit (`set_visibility_from_result`, `set_visibility`, `set_focus`).
 - Server validates tool args and applies deterministic scene-action payloads.
+- UI forwards scene context (`selectedNoradId`, `visibleCount`, condensed selected panel text) with each assist call.
 
 ## Observability Model
 - Dev runtime logs keep full-fidelity OpenAI requests/responses and tool payloads when `ASSIST_LOG_FULL` is enabled.
