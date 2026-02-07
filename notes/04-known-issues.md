@@ -16,3 +16,4 @@ Last Updated: 2026-02-07
 - Build-and-swap refresh doubles temporary disk usage while `satellite.next.db` is being built.
 - Startup initialization failures are logged but not process-fatal, so degraded behavior can appear later at request time.
 - Root and `/oracle` route duplication adds avoidable complexity.
+- Visibility updates that hide the selected satellite now clear selection/orbit immediately, which can feel abrupt in the panel.

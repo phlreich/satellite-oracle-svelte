@@ -2,6 +2,7 @@
 
 Last Updated: 2026-02-07
 Repo: `/home/phlreich/satellite-oracle-svelte`
+Head Commit: `dff2101`
 
 
 ## What Works Now
@@ -9,7 +10,7 @@ Repo: `/home/phlreich/satellite-oracle-svelte`
 - `npm run dev` now writes timestamped dev logs automatically to `logs/dev-YYYYMMDD-HHMMSS.log`.
 - Dev assist logs now include full-fidelity OpenAI requests/responses and tool payloads (`ASSIST_LOG_FULL`, default on outside production).
 - Assist traces now write to `logs/assist/*.md` with a readable step timeline and collapsible details.
-- `sql_select` still enforces read-only SQL with SQLite authorizer validation and a 5000-row cap.
+- When visibility updates hide the selected satellite, scene selection and orbit tracking are now cleared together.
 
 ## Current Limits
 - Full dev logs can be very large and include sensitive prompt/message/tool data.

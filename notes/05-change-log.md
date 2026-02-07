@@ -3,6 +3,7 @@
 Last Updated: 2026-02-07
 
 ## 2026-02-07
+- Fix scene visibility updates so hiding the selected satellite also removes its orbit track.
 - `97cb9d6` Add repository notes baseline (`notes/`) with current-truth, runbook, risks, and maintenance protocol.
 - `6234a6a` Add dual observability mode: full-fidelity dev logging for OpenAI/tool payloads and compact human-readable assist trace markdown output.
 - `56069e7` Make assistant focus robust in UI by auto-adding hidden target NORAD IDs before retrying focus and surfacing failures.

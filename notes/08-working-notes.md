@@ -8,3 +8,5 @@ Last Updated: 2026-02-07
 - Trace markdown renders parsed/summarized payloads and is not a byte-for-byte copy of the OpenAI request body.
 - Box table rows in trace files are single physical lines; visual multiline wrapping can come from narrow viewers.
 - `initializeDatabaseAndSetCache()` logs and swallows initialization failures, so route-level failures can surface later instead of failing process startup.
+- `notes/INDEX.md` commit snapshot can lag real `HEAD`; verify with `git rev-parse --short HEAD` when grounding status.
+- Orbit tracking is independent of point visibility; when a selected satellite becomes hidden, explicitly clear selection tracking and call `stopOrbitTracking()` or stale orbit lines persist.

@@ -676,6 +676,17 @@ export const createScene = async (
 		}
 	};
 
+	const clearSelectionIfHidden = () => {
+		if (localSelectedSatellite === undefined || visibility[localSelectedSatellite] > 0) {
+			return;
+		}
+		trackTarget = undefined;
+		lerpTarget = undefined;
+		previousSatellitePosition = undefined;
+		clearSelectedSatelliteHighlight();
+		stopOrbitTracking();
+	};
+
 	const unsubscribeSharedData = sharedData.subscribe((data: SharedSceneData) => {
 		if (data.length === 0) {
 			return;
@@ -709,6 +720,7 @@ export const createScene = async (
 			geometry.attributes.visibility.needsUpdate = true;
 		}
 		assignVisibleIndices();
+		clearSelectionIfHidden();
 	});
 	// line to center
 	// const lineGeometry = new THREE.LineGeometry();
