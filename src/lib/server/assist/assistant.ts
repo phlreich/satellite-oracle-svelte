@@ -13,6 +13,7 @@ import { OPENAI_API_KEY } from '$env/static/private';
 // @ts-ignore
 import { env } from '$env/dynamic/private';
 import { createLogger, serializeError } from '$lib/server/logger';
+import { guardReadOnlySql } from '$lib/server/assist/sqlGuard';
 import type {
 	AssistFocusAction,
 	AssistRequestBody,
@@ -36,6 +37,7 @@ const DEFAULT_SAMPLE_ROWS = 20;
 const MAX_PREVIEW_ROWS = 80;
 const MAX_SAMPLE_ROWS = 40;
 const MAX_HISTORY_MESSAGES = 30;
+const MAX_SQL_RESULT_ROWS = 5000;
 
 const SQL_SELECT_TOOL: FunctionTool = {
 	type: 'function',
@@ -185,30 +187,6 @@ function normalizeMode(value: unknown): AssistSelectionMode | null {
 		return value;
 	}
 	return null;
-}
-
-function normalizeSelectSql(rawSql: unknown): string | null {
-	if (typeof rawSql !== 'string') {
-		return null;
-	}
-	const sql = rawSql.trim().replace(/;+\s*$/, '');
-	if (sql.length === 0) {
-		return null;
-	}
-	if (sql.includes(';')) {
-		return null;
-	}
-	if (!/^(select|with)\b/i.test(sql)) {
-		return null;
-	}
-	if (
-		/\b(insert|update|delete|drop|alter|create|replace|pragma|attach|detach|vacuum|reindex|analyze|begin|commit|rollback)\b/i.test(
-			sql
-		)
-	) {
-		return null;
-	}
-	return sql;
 }
 
 function normalizeNoradIds(values: unknown): number[] {
@@ -449,10 +427,11 @@ async function executeToolCall({
 	});
 
 	if (toolName === 'sql_select') {
-		const sql = normalizeSelectSql(toolArgs.sql);
-		if (!sql) {
-			return { ok: false, error: 'sql_select only accepts a single SELECT/CTE SELECT statement.' };
+		const guardedSql = guardReadOnlySql(toolArgs.sql, DB_PATH);
+		if (!guardedSql.ok) {
+			return { ok: false, error: guardedSql.error };
 		}
+		const sql = guardedSql.sql;
 		const previewRows = clampInt(toolArgs.preview_rows, 1, MAX_PREVIEW_ROWS, DEFAULT_PREVIEW_ROWS);
 		const sampleRows = clampInt(toolArgs.sample_rows, 0, MAX_SAMPLE_ROWS, DEFAULT_SAMPLE_ROWS);
 		try {
@@ -461,7 +440,18 @@ async function executeToolCall({
 			if (!stmt.reader) {
 				return { ok: false, error: 'Query must return rows.' };
 			}
-			const rows = stmt.all() as Record<string, unknown>[];
+			if (!stmt.readonly) {
+				return { ok: false, error: 'sql_select only allows read-only queries.' };
+			}
+			const rows: Record<string, unknown>[] = [];
+			let rowCapReached = false;
+			for (const row of stmt.iterate() as IterableIterator<Record<string, unknown>>) {
+				rows.push(row);
+				if (rows.length >= MAX_SQL_RESULT_ROWS) {
+					rowCapReached = true;
+					break;
+				}
+			}
 			const columns = stmt.columns().map((column) => column.name);
 			const preview = rows.slice(0, previewRows);
 			const sample = randomSampleRows(rows, sampleRows);
@@ -472,6 +462,7 @@ async function executeToolCall({
 				previewRowsRequested: previewRows,
 				sampleRowsRequested: sampleRows,
 				rows: rows.length,
+				rowCapReached,
 				columns: columns.length,
 				resultRef,
 				durationMs: Date.now() - startedAt
@@ -483,7 +474,8 @@ async function executeToolCall({
 				columns,
 				preview_rows: sanitizeRowsForModel(preview),
 				sample_rows: sanitizeRowsForModel(sample),
-				truncated: rows.length > preview.length
+				truncated: rowCapReached || rows.length > preview.length,
+				truncated_by_row_cap: rowCapReached
 			};
 		} catch (error) {
 			logger.warn('sql_select failed', { error: serializeError(error) });
