@@ -22,6 +22,10 @@ const dbLogger = createLogger('db.maintenance');
 
 const DATASETS = ['satcat', 'boxscore', 'gp'] as const;
 
+function hasToken(value: string | undefined): boolean {
+	return typeof value === 'string' && value.trim() !== '';
+}
+
 function removeIfExistsSync(filePath: string) {
 	if (nfs.existsSync(filePath)) {
 		nfs.rmSync(filePath, { force: true });
@@ -385,11 +389,50 @@ async function buildAndSwapDatabase() {
 	return sceneData.length;
 }
 
+function hasRows(db: Database.Database, table: string): boolean {
+	return db.prepare(`SELECT 1 FROM ${table} LIMIT 1`).get() !== undefined;
+}
+
+function hasPopulatedLiveDatabase() {
+	if (!nfs.existsSync(DB_PATH)) {
+		return false;
+	}
+
+	const requireDiscos = hasToken(env.TOKEN_DW);
+	const db = new Database(DB_PATH, { readonly: true, fileMustExist: true });
+	try {
+		const hasCoreData = hasRows(db, 'satcat') && hasRows(db, 'boxscore') && hasRows(db, 'gp');
+		if (!hasCoreData) {
+			return false;
+		}
+
+		if (!requireDiscos) {
+			return true;
+		}
+
+		return hasRows(db, 'discos_objects') && hasRows(db, 'discos_object_entities');
+	} catch {
+		return false;
+	} finally {
+		db.close();
+	}
+}
+
 export async function initializeDatabaseAndSetCache() {
 	const startTime = Date.now();
 	dbLogger.info('database initialization started');
 	try {
 		await ensureSourceCsvs();
+		if (hasPopulatedLiveDatabase()) {
+			const sceneData = await getSceneData(DB_PATH);
+			await writeSceneDataArtifacts(sceneData);
+			dbLogger.info('database initialization completed', {
+				durationMs: Date.now() - startTime,
+				sceneDataRows: sceneData.length,
+				skippedFullRebuild: true
+			});
+			return;
+		}
 		const sceneDataRows = await buildAndSwapDatabase();
 		dbLogger.info('database initialization completed', {
 			durationMs: Date.now() - startTime,
