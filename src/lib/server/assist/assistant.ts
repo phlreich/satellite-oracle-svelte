@@ -23,8 +23,12 @@ import type {
 } from './types';
 
 const DB_PATH = path.join(process.cwd(), 'src/data/satellite.db');
-const db = new Database(DB_PATH, { readonly: true, fileMustExist: true });
-db.pragma('busy_timeout = 5000');
+
+function openReadDatabase() {
+	const db = new Database(DB_PATH, { readonly: true, fileMustExist: true });
+	db.pragma('busy_timeout = 5000');
+	return db;
+}
 
 const MAX_TOOL_ROUNDS = 8;
 const DEFAULT_PREVIEW_ROWS = 30;
@@ -115,8 +119,6 @@ type QueryResultStore = {
 	rows: Record<string, unknown>[];
 	columns: string[];
 };
-
-let cachedDatabaseContext: string | null = null;
 
 function clampInt(value: unknown, min: number, max: number, fallback: number): number {
 	if (typeof value !== 'number' || !Number.isFinite(value)) {
@@ -280,11 +282,7 @@ function toTextSummary(rows: Record<string, unknown>[]): string {
 	return JSON.stringify(sanitizeRowsForModel(rows));
 }
 
-function buildDatabaseContext() {
-	if (cachedDatabaseContext) {
-		return cachedDatabaseContext;
-	}
-
+function buildDatabaseContext(db: Database.Database) {
 	const tableRows = db
 		.prepare(
 			"SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
@@ -323,11 +321,16 @@ function buildDatabaseContext() {
 		parts.push(`  preview: ${toTextSummary(previewRows)}`);
 	}
 
-	cachedDatabaseContext = parts.join('\n');
-	return cachedDatabaseContext;
+	return parts.join('\n');
 }
 
-function buildInstructions(sceneContext: ReturnType<typeof normalizeSceneContext>): string {
+function buildInstructions({
+	sceneContext,
+	databaseContext
+}: {
+	sceneContext: ReturnType<typeof normalizeSceneContext>;
+	databaseContext: string;
+}): string {
 	return [
 		'You are the Satellite Oracle assistant.',
 		'Use tools aggressively to inspect data and update the scene in one turn when useful.',
@@ -342,7 +345,7 @@ function buildInstructions(sceneContext: ReturnType<typeof normalizeSceneContext
 		'Keep the final answer concise and explicit about scene changes applied.',
 		'For launch provider or operator/owner requests, prefer discos_objects and discos_object_entities first.',
 		`Scene context: ${JSON.stringify(sceneContext)}.`,
-		buildDatabaseContext()
+		databaseContext
 	].join('\n');
 }
 
@@ -426,12 +429,14 @@ function extractNoradIdsFromRows({
 }
 
 async function executeToolCall({
+	db,
 	toolName,
 	toolArgs,
 	queryResults,
 	pendingAction,
 	logger
 }: {
+	db: Database.Database;
 	toolName: string;
 	toolArgs: Record<string, unknown>;
 	queryResults: Map<string, QueryResultStore>;
@@ -598,6 +603,7 @@ export async function runAssist(
 	options?: { requestId?: string }
 ): Promise<AssistResponse> {
 	const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+	const db = openReadDatabase();
 	const model = env.OPENAI_ASSIST_MODEL || 'gpt-5-mini';
 	const sceneContext = normalizeSceneContext(body.sceneContext);
 	const logger = createLogger('assist.executor', {
@@ -605,143 +611,149 @@ export async function runAssist(
 		model
 	});
 	const input = buildPlannerInput(body);
-	const instructions = buildInstructions(sceneContext);
+	const databaseContext = buildDatabaseContext(db);
+	const instructions = buildInstructions({ sceneContext, databaseContext });
 	const queryResults = new Map<string, QueryResultStore>();
 	const action: AssistSceneAction = {};
 
-	logger.info('assist tool loop started', {
-		messageCount: input.length,
-		selectedNoradId: sceneContext.selectedNoradId,
-		visibleCount: sceneContext.visibleCount,
-		messages: body.messages,
-		sceneContext,
-		input,
-		instructions
-	});
-
-	let response: Response;
-	const initialRequest = {
-		model,
-		instructions,
-		input,
-		tools: ASSIST_TOOLS
-	};
-	logger.info('openai responses.create request', {
-		step: 'initial',
-		payload: {
-			...initialRequest,
-			tools: summarizeTools(ASSIST_TOOLS)
-		}
-	});
 	try {
-		response = await openai.responses.create(initialRequest);
-	} catch (error) {
-		logger.error('assist initial response failed', { error: serializeError(error) });
-		throw error;
-	}
-	logger.info('openai responses.create response', {
-		step: 'initial',
-		responseId: response.id ?? null,
-		outputText: response.output_text ?? '',
-		output: serializeResponseOutput(response)
-	});
-
-	for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-		const functionCalls = response.output.filter((item) => item.type === 'function_call');
-		if (functionCalls.length === 0) {
-			break;
-		}
-
-		logger.info('assist executing tool round', {
-			round,
-			toolCalls: functionCalls.length,
-			functionCalls: functionCalls.map((call) => ({
-				name: call.name,
-				callId: call.call_id,
-				arguments: call.arguments
-			}))
+		logger.info('assist tool loop started', {
+			messageCount: input.length,
+			selectedNoradId: sceneContext.selectedNoradId,
+			visibleCount: sceneContext.visibleCount,
+			messages: body.messages,
+			sceneContext,
+			input,
+			instructions
 		});
 
-		const toolOutputs = [] as Array<{
-			type: 'function_call_output';
-			call_id: string;
-			output: string;
-		}>;
-
-		for (const call of functionCalls) {
-			const args = parseToolArgs(call.arguments);
-			logger.info('assist tool call received', {
-				round,
-				toolName: call.name,
-				callId: call.call_id,
-				argumentsRaw: call.arguments,
-				argumentsParsed: args
-			});
-			const output = await executeToolCall({
-				toolName: call.name,
-				toolArgs: args,
-				queryResults,
-				pendingAction: action,
-				logger
-			});
-			logger.info('assist tool call output', {
-				round,
-				toolName: call.name,
-				callId: call.call_id,
-				output
-			});
-			toolOutputs.push({
-				type: 'function_call_output',
-				call_id: call.call_id,
-				output: JSON.stringify(output)
-			});
-		}
-
-		const followupRequest = {
+		let response: Response;
+		const initialRequest = {
 			model,
-			previous_response_id: response.id,
-			input: toolOutputs,
+			instructions,
+			input,
 			tools: ASSIST_TOOLS
 		};
 		logger.info('openai responses.create request', {
-			step: 'followup',
-			round,
+			step: 'initial',
 			payload: {
-				...followupRequest,
+				...initialRequest,
 				tools: summarizeTools(ASSIST_TOOLS)
 			}
 		});
 		try {
-			response = await openai.responses.create(followupRequest);
+			response = await openai.responses.create(initialRequest);
 		} catch (error) {
-			logger.error('assist tool round failed', { error: serializeError(error), round });
+			logger.error('assist initial response failed', { error: serializeError(error) });
 			throw error;
 		}
 		logger.info('openai responses.create response', {
-			step: 'followup',
-			round,
+			step: 'initial',
 			responseId: response.id ?? null,
 			outputText: response.output_text ?? '',
 			output: serializeResponseOutput(response)
 		});
+
+		for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+			const functionCalls = response.output.filter((item) => item.type === 'function_call');
+			if (functionCalls.length === 0) {
+				break;
+			}
+
+			logger.info('assist executing tool round', {
+				round,
+				toolCalls: functionCalls.length,
+				functionCalls: functionCalls.map((call) => ({
+					name: call.name,
+					callId: call.call_id,
+					arguments: call.arguments
+				}))
+			});
+
+			const toolOutputs = [] as Array<{
+				type: 'function_call_output';
+				call_id: string;
+				output: string;
+			}>;
+
+			for (const call of functionCalls) {
+				const args = parseToolArgs(call.arguments);
+				logger.info('assist tool call received', {
+					round,
+					toolName: call.name,
+					callId: call.call_id,
+					argumentsRaw: call.arguments,
+					argumentsParsed: args
+				});
+				const output = await executeToolCall({
+					db,
+					toolName: call.name,
+					toolArgs: args,
+					queryResults,
+					pendingAction: action,
+					logger
+				});
+				logger.info('assist tool call output', {
+					round,
+					toolName: call.name,
+					callId: call.call_id,
+					output
+				});
+				toolOutputs.push({
+					type: 'function_call_output',
+					call_id: call.call_id,
+					output: JSON.stringify(output)
+				});
+			}
+
+			const followupRequest = {
+				model,
+				previous_response_id: response.id,
+				input: toolOutputs,
+				tools: ASSIST_TOOLS
+			};
+			logger.info('openai responses.create request', {
+				step: 'followup',
+				round,
+				payload: {
+					...followupRequest,
+					tools: summarizeTools(ASSIST_TOOLS)
+				}
+			});
+			try {
+				response = await openai.responses.create(followupRequest);
+			} catch (error) {
+				logger.error('assist tool round failed', { error: serializeError(error), round });
+				throw error;
+			}
+			logger.info('openai responses.create response', {
+				step: 'followup',
+				round,
+				responseId: response.id ?? null,
+				outputText: response.output_text ?? '',
+				output: serializeResponseOutput(response)
+			});
+		}
+
+		const hasSceneAction = Boolean(action.visibility || action.focus);
+		const assistantMessage =
+			typeof response.output_text === 'string' && response.output_text.trim() !== ''
+				? response.output_text.trim()
+				: buildFallbackMessage(action);
+
+		logger.info('assist tool loop completed', {
+			hasVisibilityAction: Boolean(action.visibility),
+			hasFocusAction: Boolean(action.focus),
+			visibilityCount: action.visibility?.returnedCount ?? null,
+			action,
+			assistantMessage
+		});
+
+		return {
+			assistantMessage,
+			action: hasSceneAction ? action : null
+		};
+	} finally {
+		db.close();
 	}
-
-	const hasSceneAction = Boolean(action.visibility || action.focus);
-	const assistantMessage =
-		typeof response.output_text === 'string' && response.output_text.trim() !== ''
-			? response.output_text.trim()
-			: buildFallbackMessage(action);
-
-	logger.info('assist tool loop completed', {
-		hasVisibilityAction: Boolean(action.visibility),
-		hasFocusAction: Boolean(action.focus),
-		visibilityCount: action.visibility?.returnedCount ?? null,
-		action,
-		assistantMessage
-	});
-
-	return {
-		assistantMessage,
-		action: hasSceneAction ? action : null
-	};
 }
