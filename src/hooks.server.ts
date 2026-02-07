@@ -1,12 +1,13 @@
 // src/hooks.server.ts
 import type { Handle } from '@sveltejs/kit';
-import { initializeDatabaseAndSetCache, refreshData } from '$lib/server/database.server';
+import { refreshData } from '$lib/server/database.server';
 import { appLogger, newRequestId, serializeError } from '$lib/server/logger';
+import { triggerStartupInitialization } from '$lib/server/startup.server';
 import { scheduleJob } from 'node-schedule';
 
 const hooksLogger = appLogger.child({ component: 'hooks' });
 
-void initializeDatabaseAndSetCache();
+void triggerStartupInitialization();
 hooksLogger.info('startup initialization triggered');
 
 scheduleJob('38 1 * * *', async function () {

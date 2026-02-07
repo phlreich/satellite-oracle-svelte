@@ -2,11 +2,13 @@ import fs from 'fs/promises';
 import path from 'path';
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
+import { waitForStartupInitialization } from '$lib/server/startup.server';
 
 const SCENE_DATA_PATH = path.join(process.cwd(), 'src/data/scene-data.json');
 
 export const GET: RequestHandler = async () => {
 	try {
+		await waitForStartupInitialization();
 		const fileContents = await fs.readFile(SCENE_DATA_PATH, 'utf8');
 		return new Response(fileContents, {
 			headers: {

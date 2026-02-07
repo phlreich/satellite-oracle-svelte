@@ -3,6 +3,7 @@ import type { RequestHandler } from './$types';
 import { runAssist } from '$lib/server/assist/assistant';
 import type { AssistRequestBody } from '$lib/server/assist/types';
 import { createLogger, serializeError } from '$lib/server/logger';
+import { waitForStartupInitialization } from '$lib/server/startup.server';
 
 const MAX_REQUEST_BYTES = 50_000;
 const MAX_MESSAGES = 40;
@@ -45,6 +46,7 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
 	const requestId =
 		typeof localsRecord.requestId === 'string' ? (localsRecord.requestId as string) : 'unknown';
 	const logger = createLogger('assist.api', { requestId, path });
+	await waitForStartupInitialization();
 
 	const contentLength = request.headers.get('content-length');
 	logger.info('assist request received', { contentLength: contentLength ?? 'unknown' });
