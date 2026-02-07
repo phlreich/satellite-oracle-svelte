@@ -8,4 +8,4 @@ RUN npm run build
 RUN chown -R node:node /usr/src/app
 USER node
 EXPOSE 3000
-CMD [ "node", "build" ]
+CMD [ "node", "scripts/start-server-with-warmup.mjs" ]

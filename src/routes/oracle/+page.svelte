@@ -1,6 +1,5 @@
 <!-- src/routes/oracle/+page.svelte -->
 <script lang="ts">
-	import type { PageData } from './$types';
 	import { onMount, onDestroy, tick } from 'svelte';
 	import { createScene } from '$lib/scene';
 	import { writable, get } from 'svelte/store';
@@ -86,26 +85,39 @@
 	let messageContainer: HTMLElement;
 	let latLongIntervalId: number | undefined;
 
-	export let data: PageData;
 	let el: HTMLCanvasElement;
 	let cleanup: (() => void) | undefined;
 	let focusPreviousVisibleSatellite = () => {};
 	let focusNextVisibleSatellite = () => {};
+	let getVisibleCount = () => 0;
+	let focusEarth = () => false;
+	let focusVisibleNoradId = (_noradCatId: number) => false;
 
-	interface UserMessage {
-		role: 'user';
-		content: string | null;
-	}
-
-	interface ToolMessage {
-		role: 'tool';
-		content: string | null;
-		tool_call_id: string;
-	}
-
-	type Message = UserMessage | ToolMessage;
-	type SharedSceneData = [Array<{ NORAD_CAT_ID: number }>, 'show_objects' | 'draw_orbits'] | [];
+	type Message = {
+		role: 'user' | 'assistant';
+		content: string;
+	};
+	type SharedSceneIntent = 'replace' | 'add' | 'remove';
+	type SharedSceneData = [Array<{ NORAD_CAT_ID: number }>, SharedSceneIntent] | [];
 	type SceneDataRow = [string, string, string, number, string];
+	type AssistResponseBody = {
+		assistantMessage: string;
+		action: {
+			visibility?: {
+				mode: 'replace' | 'add' | 'remove';
+				noradCatIds: number[];
+				returnedCount: number;
+			};
+			focus?:
+				| {
+						target: 'earth';
+				  }
+				| {
+						target: 'norad';
+						noradCatId: number;
+				  };
+		} | null;
+	};
 
 	const chatHistory = writable<Message[]>([]);
 
@@ -113,21 +125,17 @@
 		chatHistory.set([]);
 	}
 
-	function getChatHistory() {
-		return get(chatHistory);
-	}
-
-	(window as any).getChatHistory = getChatHistory;
 	const sharedData = writable<SharedSceneData>([]);
 
 	// Reactive variable to hold selected satellite info
 	const selectedSatellite = writable<{
 		name: string;
 		details: object | string;
-		latitude: number;
-		longitude: number;
-		index: number;
-		satrec: SatRec;
+		noradCatId?: number;
+		latitude?: number;
+		longitude?: number;
+		index?: number;
+		satrec?: SatRec;
 	} | null>(null);
 	const inputValue = writable('');
 	let isMobileView = false;
@@ -143,9 +151,6 @@
 	}
 
 	async function loadSceneData(): Promise<SceneDataRow[]> {
-		if (Array.isArray(data.sceneData)) {
-			return data.sceneData;
-		}
 		const response = await fetch(`${base}/data/scene-data.json`);
 		if (!response.ok) {
 			throw new Error(`Failed to load scene data: ${response.status}`);
@@ -167,6 +172,9 @@
 				cleanup = sceneController.cleanup;
 				focusPreviousVisibleSatellite = sceneController.focusPreviousVisibleSatellite;
 				focusNextVisibleSatellite = sceneController.focusNextVisibleSatellite;
+				getVisibleCount = sceneController.getVisibleCount;
+				focusEarth = sceneController.focusEarth;
+				focusVisibleNoradId = sceneController.focusVisibleNoradId;
 			} catch (error) {
 				console.error('Error initializing scene:', error);
 			} finally {
@@ -178,7 +186,6 @@
 		}, 1000);
 		chatWindow.addEventListener('mousemove', updateCursor);
 		chatWindow.addEventListener('mousedown', initDrag);
-		// typeText('Show all American non-debris objects launched before 2009', 100);
 	});
 
 	onDestroy(() => {
@@ -202,20 +209,8 @@
 		return typeof value === 'number' ? `${value.toFixed(2)}°` : '--';
 	}
 
-	function typeText(text: string, delay = 100) {
-		let i = 0;
-		const interval = setInterval(() => {
-			$inputValue += text[i];
-			i++;
-			if (i >= text.length) {
-				clearInterval(interval);
-				handleKeyUp({ key: 'Enter' });
-			}
-		}, delay);
-	}
-
 	function updateLatLong() {
-		if ($selectedSatellite) {
+		if ($selectedSatellite?.satrec) {
 			const now = new Date();
 			const positionAndVelocity = propagate($selectedSatellite.satrec, now);
 			const positionEci = positionAndVelocity.position;
@@ -227,142 +222,96 @@
 		}
 	}
 
-	async function runQuery(query: string) {
+	async function assistChat(history: Message[]) {
 		try {
-			const response = await fetch(`${base}/api/query`, {
+			const response = await fetch(`${base}/api/assist`, {
 				method: 'POST',
 				headers: {
 					'Content-Type': 'application/json'
 				},
-				body: JSON.stringify({ query })
+				body: JSON.stringify({
+					messages: history,
+					sceneContext: {
+						selectedNoradId: $selectedSatellite?.noradCatId ?? null,
+						visibleCount: getVisibleCount(),
+						selectedInfoPanel: $selectedSatellite
+							? [
+									`name=${$selectedSatellite.name}`,
+									`details=${String($selectedSatellite.details ?? '')}`,
+									`latitude=${formatCoordinate($selectedSatellite.latitude)}`,
+									`longitude=${formatCoordinate($selectedSatellite.longitude)}`
+								].join('; ')
+							: 'none'
+					}
+				})
 			});
 
 			if (!response.ok) {
 				throw new Error(`HTTP error! Status: ${response.status}`);
 			}
 
-			const data = await response.json();
-			return data;
+			return (await response.json()) as AssistResponseBody;
 		} catch (error) {
-			console.log('Error calling runQuery: ', error);
-		}
-	}
-
-	async function aiChat(chatHistory: Message[]) {
-		try {
-			const response = await fetch(`${base}/api/ai-chat`, {
-				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json'
-				},
-				body: JSON.stringify({ chatHistory })
-			});
-
-			if (!response.ok) {
-				throw new Error(`HTTP error! Status: ${response.status}`);
-			}
-
-			return await response.json();
-		} catch (error) {
-			console.error('Error calling aiChat: ', error);
+			console.error('Error calling assistChat: ', error);
 		}
 	}
 
 	async function handleKeyUp(event: { key: string }) {
-		if (
-			event.key === 'Enter' &&
-			(get(chatHistory).length === 0 || get(chatHistory).slice(-1)[0].role !== 'user')
-		) {
-			// console.log($inputValue);
-			let userChatInput = $inputValue;
-			chatHistory.update((history) => {
-				return [...history, { role: 'user', content: userChatInput }];
-			});
-			$inputValue = '';
-			await tick();
-			messageContainer.scrollTop = messageContainer.scrollHeight;
-			const result = await aiChat($chatHistory);
-			if (!result) return;
-			if (result.choices[0]) {
-				// (window as any).result = result;
-				chatHistory.update((history) => {
-					return [...history, result.choices[0].message];
-				});
-			}
-			// if it is a function call, run it and send the data to the scene
-			if (result.choices[0].message.tool_calls) {
-				const args = JSON.parse(result.choices[0].message.tool_calls[0].function.arguments);
-				// console.log('Query:', args.query);
-
-				let data = await runQuery(args.query);
-				data = JSON.parse(data);
-				// (window as any).data = data;
-
-				// if there is an error TODO: handle this better
-				if (data.code === 'SQLITE_ERROR') {
-					// console.error('Error running query: ', data.error);
-					chatHistory.update((history) => {
-						return [
-							...history,
-							{
-								role: 'tool',
-								content: 'Query failed, SQL error: ' + data.error_message,
-								tool_call_id: result.choices[0].message.tool_calls[0].id
-							}
-						];
-					});
-					await tick();
-					messageContainer.scrollTop = messageContainer.scrollHeight;
-					return;
-				}
-				if (data.code === 'NO_ROWS') {
-					// console.error('Error running query: ', data.error);
-					chatHistory.update((history) => {
-						return [
-							...history,
-							{
-								role: 'tool',
-								content: 'Query failed, no results found.',
-								tool_call_id: result.choices[0].message.tool_calls[0].id
-							}
-						];
-					});
-					await tick();
-					messageContainer.scrollTop = messageContainer.scrollHeight;
-					return;
-				}
-				if (data.code === 'SyntaxError') {
-					chatHistory.update((history) => {
-						return [
-							...history,
-							{
-								role: 'tool',
-								content: 'Query failed, syntax error: ' + data.error_message,
-								tool_call_id: result.choices[0].message.tool_calls[0].id
-							}
-						];
-					});
-					await tick();
-					messageContainer.scrollTop = messageContainer.scrollHeight;
-					return;
-				}
-				sharedData.set([data, args.intent]);
-				chatHistory.update((history) => {
-					return [
-						...history,
-						{
-							role: 'tool',
-							content: 'Query successful. ' + args.retranslation,
-							tool_call_id: result.choices[0].message.tool_calls[0].id
-						}
-					];
-				});
-			} else {
-				// TODO think about how to handle this
-			}
-			await tick();
-			messageContainer.scrollTop = messageContainer.scrollHeight;
+		if (event.key !== 'Enter') {
+			return;
 		}
+		const userChatInput = $inputValue.trim();
+		if (userChatInput.length === 0) {
+			return;
+		}
+
+		chatHistory.update((history) => {
+			return [...history, { role: 'user', content: userChatInput }];
+		});
+		$inputValue = '';
+		await tick();
+		messageContainer.scrollTop = messageContainer.scrollHeight;
+
+		const result = await assistChat(get(chatHistory));
+		if (!result) {
+			chatHistory.update((history) => {
+				return [...history, { role: 'assistant', content: 'Request failed. Please try again.' }];
+			});
+			await tick();
+			messageContainer.scrollTop = messageContainer.scrollHeight;
+			return;
+		}
+
+		if (result.action?.visibility) {
+			const rows = result.action.visibility.noradCatIds.map((id) => ({ NORAD_CAT_ID: id }));
+			sharedData.set([rows, result.action.visibility.mode]);
+		}
+		let assistantMessage = result.assistantMessage;
+		if (result.action?.focus) {
+			if (result.action.focus.target === 'earth') {
+				focusEarth();
+			} else {
+				const targetNorad = result.action.focus.noradCatId;
+				let focusApplied = focusVisibleNoradId(targetNorad);
+				if (!focusApplied && !result.action?.visibility) {
+					sharedData.set([[{ NORAD_CAT_ID: targetNorad }], 'add']);
+					await tick();
+					focusApplied = focusVisibleNoradId(targetNorad);
+				}
+				if (!focusApplied) {
+					console.warn('Focus action could not be applied in current scene visibility.', {
+						noradCatId: targetNorad
+					});
+					assistantMessage += `\n\n(Focus could not be applied for NORAD ${targetNorad} in the current scene.)`;
+				}
+			}
+		}
+
+		chatHistory.update((history) => {
+			return [...history, { role: 'assistant', content: assistantMessage }];
+		});
+		await tick();
+		messageContainer.scrollTop = messageContainer.scrollHeight;
 	}
 </script>
 

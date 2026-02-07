@@ -7,7 +7,7 @@ import { base } from '$app/paths';
 
 type SceneDataRow = [string, string, string, number, string];
 type QueryResultRow = { NORAD_CAT_ID: number };
-type SharedSceneData = [QueryResultRow[], 'show_objects' | 'draw_orbits'] | [];
+type SharedSceneData = [QueryResultRow[], 'replace' | 'add' | 'remove'] | [];
 type OrbitWorkerPoint = { x: number; y: number; z: number };
 type OrbitWorkerResponse = {
 	type: 'orbit-points';
@@ -18,6 +18,7 @@ type OrbitWorkerResponse = {
 type SelectedSatelliteState = {
 	name: string;
 	details: object | string;
+	noradCatId?: number;
 	latitude?: number;
 	longitude?: number;
 	index?: number;
@@ -27,6 +28,9 @@ type SceneController = {
 	cleanup: () => void;
 	focusPreviousVisibleSatellite: () => void;
 	focusNextVisibleSatellite: () => void;
+	getVisibleCount: () => number;
+	focusEarth: () => boolean;
+	focusVisibleNoradId: (noradCatId: number) => boolean;
 };
 
 const scene = new THREE.Scene();
@@ -57,7 +61,9 @@ const austinLongitudeRad = THREE.MathUtils.degToRad(-97.7431);
 
 const getEarthRotationAtTimeRad = (timeMs: number) => {
 	const timeElapsed = timeMs - referenceTime;
-	return ((timeElapsed % oneSiderealDayInMilliseconds) / oneSiderealDayInMilliseconds) * Math.PI * 2;
+	return (
+		((timeElapsed % oneSiderealDayInMilliseconds) / oneSiderealDayInMilliseconds) * Math.PI * 2
+	);
 };
 
 const getAustinTargetAtTime = (time: Date) => {
@@ -167,13 +173,6 @@ export const createScene = async (
 	selectedSatellite: Writable<SelectedSatelliteState>,
 	sharedData: Writable<SharedSceneData>
 ): Promise<SceneController> => {
-	let audioFlag = false;
-	const playAudio = () => {
-		audioFlag = false;
-		const audio = new Audio(`${base}/threnody.mp3`);
-		audio.play();
-	};
-
 	const raycaster = new THREE.Raycaster();
 	raycaster.params.Points = { threshold: 20 };
 	const mouse = new THREE.Vector2();
@@ -559,6 +558,7 @@ export const createScene = async (
 		selectedSatellite.set({
 			name: satellites[index].slice(-1)[0] + ' NORAD ID: ' + satelliteData[index].norad_cat_id,
 			details: satellites[index][1] + '\n' + satellites[index][2],
+			noradCatId: satelliteData[index].norad_cat_id,
 			index: index,
 			satrec: satelliteData[index].satrec
 		});
@@ -571,6 +571,34 @@ export const createScene = async (
 		};
 
 		drawOrbit(index);
+	}
+
+	function focusEarth() {
+		trackTarget = undefined;
+		previousSatellitePosition = undefined;
+		clearSelectedSatelliteHighlight();
+		stopOrbitTracking();
+		lerpTarget = { type: 'body', indeces: undefined, position: new THREE.Vector3(0, 0, 0) };
+		selectedSatellite.set({
+			name: 'Earth',
+			details: ''
+		});
+		return true;
+	}
+
+	function focusVisibleNoradId(noradCatId: number) {
+		if (!Number.isInteger(noradCatId) || noradCatId <= 0) {
+			return false;
+		}
+		const index = satelliteData.findIndex(
+			(satellite, satelliteIndex) =>
+				satellite.norad_cat_id === noradCatId && visibility[satelliteIndex] > 0
+		);
+		if (index === -1) {
+			return false;
+		}
+		selectSatellite(index);
+		return true;
 	}
 
 	function selectRelativeVisibleSatellite(step: -1 | 1) {
@@ -613,9 +641,6 @@ export const createScene = async (
 	}
 
 	function onClick() {
-		if (audioFlag) {
-			playAudio();
-		}
 		const shortClickDuration = 230;
 		if (duration < shortClickDuration && mouseDownEvent) {
 			handleShortClick(mouseDownEvent);
@@ -651,12 +676,12 @@ export const createScene = async (
 		}
 	};
 
-	sharedData.subscribe((data: SharedSceneData) => {
+	const unsubscribeSharedData = sharedData.subscribe((data: SharedSceneData) => {
 		if (data.length === 0) {
 			return;
 		}
 		const selectedNoradIds = new Set(data[0].map((item: QueryResultRow) => item.NORAD_CAT_ID));
-		if (data[1] === 'show_objects') {
+		if (data[1] === 'replace') {
 			for (let i = 0; i < N; i++) {
 				const noradID = satelliteData[i].norad_cat_id;
 				if (selectedNoradIds.has(noradID)) {
@@ -666,13 +691,22 @@ export const createScene = async (
 				}
 			}
 			geometry.attributes.visibility.needsUpdate = true;
-		} else if (data[1] === 'draw_orbits') {
+		} else if (data[1] === 'add') {
 			for (let i = 0; i < N; i++) {
 				const noradID = satelliteData[i].norad_cat_id;
 				if (selectedNoradIds.has(noradID)) {
 					visibility[i] = 1.0;
 				}
 			}
+			geometry.attributes.visibility.needsUpdate = true;
+		} else if (data[1] === 'remove') {
+			for (let i = 0; i < N; i++) {
+				const noradID = satelliteData[i].norad_cat_id;
+				if (selectedNoradIds.has(noradID)) {
+					visibility[i] = 0.0;
+				}
+			}
+			geometry.attributes.visibility.needsUpdate = true;
 		}
 		assignVisibleIndices();
 	});
@@ -778,6 +812,7 @@ export const createScene = async (
 			satelliteWorkers.forEach((worker) => worker.terminate());
 			stopOrbitTracking();
 			orbitWorker.terminate();
+			unsubscribeSharedData();
 			document.removeEventListener('visibilitychange', handleVisibilityChange);
 			window.removeEventListener('resize', resize);
 			window.removeEventListener('mousemove', updateMouseCoordinates);
@@ -788,7 +823,10 @@ export const createScene = async (
 			renderer.domElement.removeEventListener('mouseleave', onCanvasMouseLeave);
 		},
 		focusPreviousVisibleSatellite: () => selectRelativeVisibleSatellite(-1),
-		focusNextVisibleSatellite: () => selectRelativeVisibleSatellite(1)
+		focusNextVisibleSatellite: () => selectRelativeVisibleSatellite(1),
+		getVisibleCount: () => activeVisibleIndices.length,
+		focusEarth,
+		focusVisibleNoradId
 	};
 };
 
