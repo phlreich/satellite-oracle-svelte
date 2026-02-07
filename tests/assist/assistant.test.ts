@@ -113,7 +113,102 @@ describe('runAssist tool loop behavior', () => {
 		expect(result.action?.visibility?.mode).toBe('replace');
 		expect(result.action?.visibility?.returnedCount).toBe(12);
 		expect(result.action?.focus?.target).toBe('earth');
+		expect(result.historyMessages?.[0]?.content).toContain('sql_select sql=');
+		expect(result.historyMessages?.[0]?.content).toContain(
+			'SELECT NORAD_CAT_ID FROM gp ORDER BY NORAD_CAT_ID LIMIT 12'
+		);
 		expect(createMock).toHaveBeenCalledTimes(3);
+	});
+
+	it('can apply orbit overlays from a SQL result in the same turn', async () => {
+		let requestCount = 0;
+		createMock.mockImplementation(async (request: unknown) => {
+			const typed = request as Record<string, unknown>;
+			if (requestCount === 0) {
+				requestCount += 1;
+				return functionCallResponse('resp_1', [
+					{
+						name: 'sql_select',
+						callId: 'call_sql_1',
+						args: {
+							sql: 'SELECT NORAD_CAT_ID FROM gp ORDER BY NORAD_CAT_ID LIMIT 8',
+							preview_rows: 5,
+							sample_rows: 0
+						}
+					}
+				]);
+			}
+			if (requestCount === 1) {
+				requestCount += 1;
+				const outputs = typed.input as Array<{ output: string }>;
+				const parsedOutput = JSON.parse(outputs[0].output) as { result_ref: string };
+				return functionCallResponse('resp_2', [
+					{
+						name: 'set_visibility_from_result',
+						callId: 'call_visibility_1',
+						args: {
+							result_ref: parsedOutput.result_ref,
+							mode: 'replace',
+							id_column: 'NORAD_CAT_ID'
+						}
+					},
+					{
+						name: 'set_orbits_from_result',
+						callId: 'call_orbits_1',
+						args: {
+							result_ref: parsedOutput.result_ref,
+							mode: 'replace',
+							id_column: 'NORAD_CAT_ID'
+						}
+					}
+				]);
+			}
+			return {
+				id: 'resp_3',
+				output: [],
+				output_text: 'Applied visibility and orbit overlays.'
+			};
+		});
+
+		const result = await runAssist({
+			messages: [{ role: 'user', content: 'show a small batch with orbits' }],
+			sceneContext: { visibleCount: 100, selectedInfoPanel: 'none' }
+		});
+
+		expect(result.assistantMessage).toContain('Applied visibility');
+		expect(result.action?.visibility?.mode).toBe('replace');
+		expect(result.action?.orbits?.mode).toBe('replace');
+		expect(result.action?.visibility?.returnedCount).toBe(8);
+		expect(result.action?.orbits?.returnedCount).toBe(8);
+		expect(createMock).toHaveBeenCalledTimes(3);
+	});
+
+	it('keeps large explicit orbit sets intact', async () => {
+		const manyIds = Array.from({ length: 400 }, (_, i) => i + 1);
+		createMock
+			.mockResolvedValueOnce(
+				functionCallResponse('resp_1', [
+					{
+						name: 'set_orbits',
+						callId: 'call_orbits_1',
+						args: { mode: 'replace', norad_ids: manyIds }
+					}
+				])
+			)
+			.mockResolvedValueOnce({
+				id: 'resp_2',
+				output: [],
+				output_text: 'Applied orbit overlays.'
+			});
+
+		const result = await runAssist({
+			messages: [{ role: 'user', content: 'draw all these orbits' }]
+		});
+
+		expect(result.action?.orbits?.mode).toBe('replace');
+		expect(result.action?.orbits?.returnedCount).toBe(400);
+		expect(result.action?.orbits?.noradCatIds).toHaveLength(400);
+		expect(createMock).toHaveBeenCalledTimes(2);
 	});
 
 	it('rejects non-SELECT SQL tool calls and leaves scene unchanged', async () => {

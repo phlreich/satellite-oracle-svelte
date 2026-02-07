@@ -24,6 +24,12 @@ export type AssistVisibilityAction = {
 	returnedCount: number;
 };
 
+export type AssistOrbitAction = {
+	mode: AssistSelectionMode;
+	noradCatIds: number[];
+	returnedCount: number;
+};
+
 export type AssistFocusAction =
 	| {
 			target: 'earth';
@@ -35,10 +41,12 @@ export type AssistFocusAction =
 
 export type AssistSceneAction = {
 	visibility?: AssistVisibilityAction;
+	orbits?: AssistOrbitAction;
 	focus?: AssistFocusAction;
 };
 
 export type AssistResponse = {
 	assistantMessage: string;
 	action: AssistSceneAction | null;
+	historyMessages?: AssistMessage[];
 };

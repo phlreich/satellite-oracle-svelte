@@ -92,18 +92,29 @@
 	let getVisibleCount = () => 0;
 	let focusEarth = () => false;
 	let focusVisibleNoradId = (_noradCatId: number) => false;
+	let applyOrbitOverlay = (_noradCatIds: number[], _mode: SharedSceneIntent) => {};
 
 	type Message = {
 		role: 'user' | 'assistant';
 		content: string;
+		kind?: 'chat' | 'tool';
 	};
 	type SharedSceneIntent = 'replace' | 'add' | 'remove';
 	type SharedSceneData = [Array<{ NORAD_CAT_ID: number }>, SharedSceneIntent] | [];
 	type SceneDataRow = [string, string, string, number, string];
 	type AssistResponseBody = {
 		assistantMessage: string;
+		historyMessages?: Array<{
+			role: 'assistant' | 'user';
+			content: string;
+		}>;
 		action: {
 			visibility?: {
+				mode: 'replace' | 'add' | 'remove';
+				noradCatIds: number[];
+				returnedCount: number;
+			};
+			orbits?: {
 				mode: 'replace' | 'add' | 'remove';
 				noradCatIds: number[];
 				returnedCount: number;
@@ -379,6 +390,7 @@
 				getVisibleCount = sceneController.getVisibleCount;
 				focusEarth = sceneController.focusEarth;
 				focusVisibleNoradId = sceneController.focusVisibleNoradId;
+				applyOrbitOverlay = sceneController.applyOrbitOverlay;
 			} catch (error) {
 				console.error('Error initializing scene:', error);
 			} finally {
@@ -414,6 +426,26 @@
 		return typeof value === 'number' ? `${value.toFixed(2)}°` : '--';
 	}
 
+	function scrollChatToBottom() {
+		if (!messageContainer) {
+			return;
+		}
+		messageContainer.scrollTop = messageContainer.scrollHeight;
+	}
+
+	function scrollToLatestAssistantMessageStart() {
+		if (!messageContainer) {
+			return;
+		}
+		const assistantMessages = messageContainer.querySelectorAll<HTMLElement>('.message.assistant');
+		const latestAssistantMessage = assistantMessages[assistantMessages.length - 1];
+		if (!latestAssistantMessage) {
+			scrollChatToBottom();
+			return;
+		}
+		latestAssistantMessage.scrollIntoView({ block: 'start' });
+	}
+
 	function updateLatLong() {
 		if ($selectedSatellite?.satrec) {
 			const now = new Date();
@@ -435,7 +467,10 @@
 					'Content-Type': 'application/json'
 				},
 				body: JSON.stringify({
-					messages: history,
+					messages: history.map((message) => ({
+						role: message.role,
+						content: message.content
+					})),
 					sceneContext: {
 						selectedNoradId: $selectedSatellite?.noradCatId ?? null,
 						visibleCount: getVisibleCount(),
@@ -471,29 +506,35 @@
 		}
 
 		chatHistory.update((history) => {
-			return [...history, { role: 'user', content: userChatInput }];
+			return [...history, { role: 'user', content: userChatInput, kind: 'chat' }];
 		});
 		$inputValue = '';
 		assistPending = true;
 		startThinkingAnimation();
 		await tick();
-		messageContainer.scrollTop = messageContainer.scrollHeight;
+		scrollChatToBottom();
 
 		const result = await assistChat(get(chatHistory));
 		await stopThinkingAnimationGracefully();
 		assistPending = false;
 		if (!result) {
 			chatHistory.update((history) => {
-				return [...history, { role: 'assistant', content: 'Request failed. Please try again.' }];
+				return [
+					...history,
+					{ role: 'assistant', content: 'Request failed. Please try again.', kind: 'chat' }
+				];
 			});
 			await tick();
-			messageContainer.scrollTop = messageContainer.scrollHeight;
+			scrollToLatestAssistantMessageStart();
 			return;
 		}
 
 		if (result.action?.visibility) {
 			const rows = result.action.visibility.noradCatIds.map((id) => ({ NORAD_CAT_ID: id }));
 			sharedData.set([rows, result.action.visibility.mode]);
+		}
+		if (result.action?.orbits) {
+			applyOrbitOverlay(result.action.orbits.noradCatIds, result.action.orbits.mode);
 		}
 		let assistantMessage = result.assistantMessage;
 		if (result.action?.focus) {
@@ -516,11 +557,23 @@
 			}
 		}
 
+		const toolHistoryMessages =
+			result.historyMessages
+				?.filter((message) => message.role === 'assistant' || message.role === 'user')
+				.map((message) => ({
+					role: message.role,
+					content: message.content,
+					kind: 'tool' as const
+				})) ?? [];
 		chatHistory.update((history) => {
-			return [...history, { role: 'assistant', content: assistantMessage }];
+			return [
+				...history,
+				...toolHistoryMessages,
+				{ role: 'assistant', content: assistantMessage, kind: 'chat' }
+			];
 		});
 		await tick();
-		messageContainer.scrollTop = messageContainer.scrollHeight;
+		scrollToLatestAssistantMessageStart();
 	}
 </script>
 
@@ -562,7 +615,7 @@
 >
 	<div bind:this={messageContainer} class="message-container">
 		{#each $chatHistory as message}
-			{#if message.content != null}
+			{#if message.content != null && message.kind !== 'tool'}
 				<div class="message {message.role}">
 					{message.content}
 				</div>

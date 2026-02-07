@@ -9,8 +9,10 @@ onmessage = function (event) {
 	if (event.data.type === 'init') {
 		satelliteData = event.data.satelliteData;
 	} else if (event.data.type === 'process') {
+		const kind = event.data.kind === 'overlay' ? 'overlay' : 'focus';
 		const satelliteIndex = event.data.satelliteIndex;
 		const requestId = Number(event.data.requestId) || 0;
+		const generation = Number(event.data.generation) || 0;
 		const startTimeMs = Number(event.data.startTimeMs) || Date.now();
 		const sampleCount = Math.max(24, Number(event.data.sampleCount) || 360);
 		const closeLoop = Boolean(event.data.closeLoop);
@@ -24,7 +26,9 @@ onmessage = function (event) {
 		});
 		postMessage({
 			type: 'orbit-points',
+			kind,
 			requestId,
+			generation,
 			satelliteIndex,
 			points: orbitPoints
 		});

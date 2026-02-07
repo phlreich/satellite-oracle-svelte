@@ -99,6 +99,9 @@ function summarizeAction(action: AssistSceneAction): Record<string, unknown> {
 		hasVisibilityAction: Boolean(action.visibility),
 		visibilityMode: action.visibility?.mode ?? null,
 		visibilityCount: action.visibility?.returnedCount ?? null,
+		hasOrbitAction: Boolean(action.orbits),
+		orbitMode: action.orbits?.mode ?? null,
+		orbitCount: action.orbits?.returnedCount ?? null,
 		hasFocusAction: Boolean(action.focus),
 		focusTarget: action.focus?.target ?? null,
 		focusNoradId: action.focus?.target === 'norad' ? action.focus.noradCatId : null
@@ -112,6 +115,13 @@ function compactActionForTrace(action: AssistSceneAction): Record<string, unknow
 					mode: action.visibility.mode,
 					returnedCount: action.visibility.returnedCount,
 					noradPreview: action.visibility.noradCatIds.slice(0, 20)
+				}
+			: null,
+		orbits: action.orbits
+			? {
+					mode: action.orbits.mode,
+					returnedCount: action.orbits.returnedCount,
+					noradPreview: action.orbits.noradCatIds.slice(0, 20)
 				}
 			: null,
 		focus: action.focus ?? null
@@ -506,6 +516,21 @@ function summarizeToolArgs(
 			norad_preview: ids.slice(0, 12)
 		};
 	}
+	if (toolName === 'set_orbits_from_result') {
+		return {
+			result_ref: toolArgs.result_ref ?? null,
+			mode: toolArgs.mode ?? null,
+			id_column: toolArgs.id_column ?? null
+		};
+	}
+	if (toolName === 'set_orbits') {
+		const ids = normalizeNoradIds(toolArgs.norad_ids);
+		return {
+			mode: toolArgs.mode ?? null,
+			norad_count: ids.length,
+			norad_preview: ids.slice(0, 12)
+		};
+	}
 	if (toolName === 'set_focus') {
 		return {
 			target: toolArgs.target ?? null,
@@ -528,7 +553,12 @@ function summarizeToolOutput(
 			truncated: output.truncated ?? null
 		};
 	}
-	if (toolName === 'set_visibility' || toolName === 'set_visibility_from_result') {
+	if (
+		toolName === 'set_visibility' ||
+		toolName === 'set_visibility_from_result' ||
+		toolName === 'set_orbits' ||
+		toolName === 'set_orbits_from_result'
+	) {
 		return {
 			ok: output.ok ?? null,
 			mode: output.mode ?? null,
@@ -544,6 +574,36 @@ function summarizeToolOutput(
 		};
 	}
 	return output;
+}
+
+function formatToolHistoryEntry(
+	toolName: string,
+	toolArgs: Record<string, unknown>,
+	output: Record<string, unknown>
+): string {
+	if (toolName === 'sql_select') {
+		const sql = typeof toolArgs.sql === 'string' ? toolArgs.sql.trim() : '';
+		const rowCount = output.row_count ?? null;
+		const resultRef = output.result_ref ?? null;
+		return `sql_select sql=${JSON.stringify(sql)} row_count=${rowCount} result_ref=${resultRef}`;
+	}
+	if (toolName === 'set_visibility_from_result') {
+		return `set_visibility_from_result result_ref=${toolArgs.result_ref ?? null} mode=${toolArgs.mode ?? null} id_column=${toolArgs.id_column ?? null} returned_count=${output.returned_count ?? null}`;
+	}
+	if (toolName === 'set_visibility') {
+		return `set_visibility mode=${toolArgs.mode ?? null} returned_count=${output.returned_count ?? null}`;
+	}
+	if (toolName === 'set_orbits_from_result') {
+		return `set_orbits_from_result result_ref=${toolArgs.result_ref ?? null} mode=${toolArgs.mode ?? null} id_column=${toolArgs.id_column ?? null} returned_count=${output.returned_count ?? null}`;
+	}
+	if (toolName === 'set_orbits') {
+		return `set_orbits mode=${toolArgs.mode ?? null} returned_count=${output.returned_count ?? null}`;
+	}
+	if (toolName === 'set_focus') {
+		return `set_focus target=${toolArgs.target ?? null} norad_id=${toolArgs.norad_id ?? null}`;
+	}
+	const summarized = summarizeToolOutput(toolName, output);
+	return `${toolName} ${JSON.stringify(summarized)}`;
 }
 
 function summarizeFunctionCallOutputForTrace(
@@ -620,6 +680,43 @@ const SET_VISIBILITY_TOOL: FunctionTool = {
 	}
 };
 
+const SET_ORBITS_FROM_RESULT_TOOL: FunctionTool = {
+	type: 'function',
+	name: 'set_orbits_from_result',
+	description:
+		'Draw orbit trails using NORAD IDs from a prior sql_select result_ref and an ID column.',
+	strict: false,
+	parameters: {
+		type: 'object',
+		properties: {
+			result_ref: { type: 'string' },
+			mode: { type: 'string', enum: ['replace', 'add', 'remove'] },
+			id_column: { type: 'string' }
+		},
+		required: ['result_ref', 'mode'],
+		additionalProperties: false
+	}
+};
+
+const SET_ORBITS_TOOL: FunctionTool = {
+	type: 'function',
+	name: 'set_orbits',
+	description: 'Draw orbit trails from an explicit list of NORAD IDs.',
+	strict: false,
+	parameters: {
+		type: 'object',
+		properties: {
+			mode: { type: 'string', enum: ['replace', 'add', 'remove'] },
+			norad_ids: {
+				type: 'array',
+				items: { type: 'number' }
+			}
+		},
+		required: ['mode', 'norad_ids'],
+		additionalProperties: false
+	}
+};
+
 const SET_FOCUS_TOOL: FunctionTool = {
 	type: 'function',
 	name: 'set_focus',
@@ -640,6 +737,8 @@ const ASSIST_TOOLS: FunctionTool[] = [
 	SQL_SELECT_TOOL,
 	SET_VISIBILITY_FROM_RESULT_TOOL,
 	SET_VISIBILITY_TOOL,
+	SET_ORBITS_FROM_RESULT_TOOL,
+	SET_ORBITS_TOOL,
 	SET_FOCUS_TOOL
 ];
 
@@ -840,6 +939,8 @@ function buildInstructions({
 		'Use tools aggressively to inspect data and update the scene in one turn when useful.',
 		'You can run only read-only SQL through sql_select. Use sql_select for analysis before acting.',
 		'For large result sets, use set_visibility_from_result instead of manually listing IDs.',
+		'When the user asks for orbit trails, use set_orbits_from_result (or set_orbits) in the same turn.',
+		'For requests like "show X with orbits", pair visibility and orbit actions on the same subset.',
 		"When the user asks to focus an object, call set_focus with target='norad' and norad_id.",
 		"When the user asks to focus Earth, call set_focus with target='earth'.",
 		'When the user asks to see objects, prefer applying a visibility action instead of returning long lists.',
@@ -1181,6 +1282,97 @@ async function executeToolCall({
 		return { ok: true, mode, returned_count: noradIds.length };
 	}
 
+	if (toolName === 'set_orbits_from_result') {
+		const resultRef =
+			typeof toolArgs.result_ref === 'string' && toolArgs.result_ref.trim() !== ''
+				? toolArgs.result_ref.trim()
+				: null;
+		const mode = normalizeMode(toolArgs.mode);
+		if (!resultRef || !mode) {
+			return { ok: false, error: 'set_orbits_from_result requires result_ref and valid mode.' };
+		}
+		const storedResult = queryResults.get(resultRef);
+		if (!storedResult) {
+			return { ok: false, error: `Unknown result_ref '${resultRef}'.` };
+		}
+		const idColumn = typeof toolArgs.id_column === 'string' ? toolArgs.id_column : undefined;
+		const extraction = extractNoradIdsFromRows({ rows: storedResult.rows, idColumn });
+		if (extraction.ids.length === 0 && mode !== 'replace') {
+			return {
+				ok: false,
+				error:
+					'Could not extract NORAD IDs from result rows. Provide id_column (e.g. NORAD_CAT_ID).',
+				available_columns: storedResult.columns
+			};
+		}
+		pendingAction.orbits = {
+			mode,
+			noradCatIds: extraction.ids,
+			returnedCount: extraction.ids.length
+		};
+		logger.info('orbit action prepared from result', {
+			mode,
+			returnedCount: extraction.ids.length,
+			resolvedColumn: extraction.resolvedColumn
+		});
+		fullLog?.('orbit action prepared from result full', {
+			mode,
+			returnedCount: extraction.ids.length,
+			resolvedColumn: extraction.resolvedColumn,
+			noradCatIds: extraction.ids
+		});
+		traceEvent?.({
+			title: 'Tool result: set_orbits_from_result',
+			summary: {
+				mode,
+				returned_count: extraction.ids.length,
+				id_column: extraction.resolvedColumn
+			},
+			details: {
+				mode,
+				result_ref: resultRef,
+				id_column: extraction.resolvedColumn,
+				returned_count: extraction.ids.length,
+				norad_preview: extraction.ids.slice(0, 50)
+			}
+		});
+		return {
+			ok: true,
+			mode,
+			returned_count: extraction.ids.length,
+			id_column: extraction.resolvedColumn
+		};
+	}
+
+	if (toolName === 'set_orbits') {
+		const mode = normalizeMode(toolArgs.mode);
+		const noradIds = normalizeNoradIds(toolArgs.norad_ids);
+		if (!mode || (mode !== 'replace' && noradIds.length === 0)) {
+			return { ok: false, error: 'set_orbits requires mode and valid NORAD IDs.' };
+		}
+		pendingAction.orbits = {
+			mode,
+			noradCatIds: noradIds,
+			returnedCount: noradIds.length
+		};
+		logger.info('orbit action prepared', { mode, returnedCount: noradIds.length });
+		fullLog?.('orbit action prepared full', {
+			mode,
+			returnedCount: noradIds.length,
+			noradCatIds: noradIds
+		});
+		traceEvent?.({
+			title: 'Tool result: set_orbits',
+			summary: { mode, returned_count: noradIds.length },
+			details: {
+				mode,
+				returned_count: noradIds.length,
+				norad_preview: noradIds.slice(0, 50)
+			}
+		});
+		return { ok: true, mode, returned_count: noradIds.length };
+	}
+
 	if (toolName === 'set_focus') {
 		const target = toolArgs.target;
 		let focus: AssistFocusAction | null = null;
@@ -1217,7 +1409,7 @@ async function executeToolCall({
 }
 
 function buildFallbackMessage(action: AssistSceneAction): string {
-	if (!action.visibility && !action.focus) {
+	if (!action.visibility && !action.orbits && !action.focus) {
 		return 'I could not complete that request. Please restate what you want to query or change.';
 	}
 	const parts: string[] = [];
@@ -1225,6 +1417,9 @@ function buildFallbackMessage(action: AssistSceneAction): string {
 		parts.push(
 			`Applied visibility mode ${action.visibility.mode} to ${action.visibility.returnedCount} objects.`
 		);
+	}
+	if (action.orbits) {
+		parts.push(`Applied orbit mode ${action.orbits.mode} to ${action.orbits.returnedCount} objects.`);
 	}
 	if (action.focus) {
 		parts.push(
@@ -1254,6 +1449,7 @@ export async function runAssist(
 	const instructions = buildInstructions({ sceneContext, databaseContext });
 	const queryResults = new Map<string, QueryResultStore>();
 	const action: AssistSceneAction = {};
+	const toolHistoryLines: string[] = [];
 	const traceEnabled = isAssistTraceEnabled();
 	const fullLogEnabled = isAssistFullLogEnabled();
 	const traceStartedAt = Date.now();
@@ -1447,6 +1643,7 @@ export async function runAssist(
 					callId: call.call_id,
 					output
 				});
+				toolHistoryLines.push(formatToolHistoryEntry(call.name, args, output));
 				toolOutputs.push({
 					type: 'function_call_output',
 					call_id: call.call_id,
@@ -1514,7 +1711,20 @@ export async function runAssist(
 			});
 		}
 
-		const hasSceneAction = Boolean(action.visibility || action.focus);
+		const historyMessages =
+			toolHistoryLines.length > 0
+				? [
+						{
+							role: 'assistant' as const,
+							content: [
+								'[tool-history]',
+								...toolHistoryLines.map((line, index) => `${index + 1}. ${line}`)
+							].join('\n')
+						}
+					]
+				: undefined;
+
+		const hasSceneAction = Boolean(action.visibility || action.orbits || action.focus);
 		const assistantMessage =
 			typeof response.output_text === 'string' && response.output_text.trim() !== ''
 				? response.output_text.trim()
@@ -1572,7 +1782,8 @@ export async function runAssist(
 
 		return {
 			assistantMessage,
-			action: hasSceneAction ? action : null
+			action: hasSceneAction ? action : null,
+			historyMessages
 		};
 	} finally {
 		db.close();

@@ -8,10 +8,13 @@ import { base } from '$app/paths';
 type SceneDataRow = [string, string, string, number, string];
 type QueryResultRow = { NORAD_CAT_ID: number };
 type SharedSceneData = [QueryResultRow[], 'replace' | 'add' | 'remove'] | [];
+type OrbitOverlayMode = 'replace' | 'add' | 'remove';
 type OrbitWorkerPoint = { x: number; y: number; z: number };
 type OrbitWorkerResponse = {
 	type: 'orbit-points';
+	kind: 'focus' | 'overlay';
 	requestId: number;
+	generation?: number;
 	satelliteIndex: number;
 	points: OrbitWorkerPoint[];
 };
@@ -31,6 +34,7 @@ type SceneController = {
 	getVisibleCount: () => number;
 	focusEarth: () => boolean;
 	focusVisibleNoradId: (noradCatId: number) => boolean;
+	applyOrbitOverlay: (noradCatIds: number[], mode: OrbitOverlayMode) => void;
 };
 
 const scene = new THREE.Scene();
@@ -235,6 +239,10 @@ export const createScene = async (
 		const epochDate = new Date(epoch);
 		return { satrec, epoch: epochDate, norad_cat_id };
 	});
+	const satelliteIndexByNoradId = new Map<number, number>();
+	for (let i = 0; i < satelliteData.length; i++) {
+		satelliteIndexByNoradId.set(satelliteData[i].norad_cat_id, i);
+	}
 	const workerUpdateIntervalMs = 250;
 	const workerCount = Math.max(
 		1,
@@ -248,12 +256,24 @@ export const createScene = async (
 
 	orbitWorker.postMessage({ type: 'init', satelliteData });
 
-	const orbitSampleCount = 720;
+	const focusOrbitSampleCount = 720;
+	const overlayOrbitSampleCount = 72;
 	const orbitRefreshIntervalMs = 1000;
 	let activeOrbitSatelliteIndex: number | undefined;
-	let latestOrbitRequestId = 0;
+	let latestFocusOrbitRequestId = -1;
+	let orbitRequestSequence = 0;
+	let overlayOrbitGeneration = 0;
 	let orbitRefreshIntervalId: number | undefined;
 	let orbitLine: THREE.Line | undefined;
+	let orbitOverlayMesh: THREE.LineSegments | undefined;
+	let overlayRebuildScheduled = false;
+	const orbitOverlayIndices = new Set<number>();
+	const orbitOverlayPaths = new Map<number, Float32Array>();
+
+	function nextOrbitRequestId() {
+		orbitRequestSequence += 1;
+		return orbitRequestSequence;
+	}
 
 	function disposeOrbitLine() {
 		if (!orbitLine) {
@@ -265,20 +285,205 @@ export const createScene = async (
 		orbitLine = undefined;
 	}
 
+	function disposeOrbitOverlayMesh() {
+		if (!orbitOverlayMesh) {
+			return;
+		}
+		scene.remove(orbitOverlayMesh);
+		orbitOverlayMesh.geometry.dispose();
+		(orbitOverlayMesh.material as THREE.Material).dispose();
+		orbitOverlayMesh = undefined;
+	}
+
+	function disposeAllOrbitOverlayLines() {
+		orbitOverlayIndices.clear();
+		orbitOverlayPaths.clear();
+		disposeOrbitOverlayMesh();
+	}
+
+	function createOrbitLine(
+		orbitPoints: THREE.Vector3[],
+		color: number,
+		opacity: number,
+		name: string
+	) {
+		const orbitGeometry = new THREE.BufferGeometry().setFromPoints(orbitPoints);
+		const orbitMaterial = new THREE.LineBasicMaterial({
+			color,
+			opacity,
+			transparent: true
+		});
+		orbitMaterial.depthWrite = false;
+		orbitMaterial.depthTest = true;
+		const newOrbitLine = new THREE.Line(orbitGeometry, orbitMaterial);
+		newOrbitLine.name = name;
+		newOrbitLine.renderOrder = 1;
+		return newOrbitLine;
+	}
+
+	function rebuildOrbitOverlayMesh() {
+		if (orbitOverlayPaths.size === 0) {
+			disposeOrbitOverlayMesh();
+			return;
+		}
+		let segmentCount = 0;
+		for (const positions of orbitOverlayPaths.values()) {
+			const points = positions.length / 3;
+			if (points >= 2) {
+				segmentCount += points - 1;
+			}
+		}
+		if (segmentCount === 0) {
+			disposeOrbitOverlayMesh();
+			return;
+		}
+		const segmentPositions = new Float32Array(segmentCount * 2 * 3);
+		let writeOffset = 0;
+		for (const positions of orbitOverlayPaths.values()) {
+			const points = positions.length / 3;
+			if (points < 2) {
+				continue;
+			}
+			for (let i = 0; i < points - 1; i++) {
+				const from = i * 3;
+				const to = (i + 1) * 3;
+				segmentPositions[writeOffset++] = positions[from];
+				segmentPositions[writeOffset++] = positions[from + 1];
+				segmentPositions[writeOffset++] = positions[from + 2];
+				segmentPositions[writeOffset++] = positions[to];
+				segmentPositions[writeOffset++] = positions[to + 1];
+				segmentPositions[writeOffset++] = positions[to + 2];
+			}
+		}
+		const orbitGeometry = new THREE.BufferGeometry();
+		orbitGeometry.setAttribute('position', new THREE.BufferAttribute(segmentPositions, 3));
+		const orbitMaterial = new THREE.LineBasicMaterial({
+			color: 0x9de3ff,
+			opacity: 0.35,
+			transparent: true
+		});
+		orbitMaterial.depthWrite = false;
+		orbitMaterial.depthTest = true;
+		const mesh = new THREE.LineSegments(orbitGeometry, orbitMaterial);
+		mesh.name = 'orbitOverlayMesh';
+		mesh.renderOrder = 1;
+		disposeOrbitOverlayMesh();
+		scene.add(mesh);
+		orbitOverlayMesh = mesh;
+	}
+
+	function scheduleOrbitOverlayMeshRebuild() {
+		if (overlayRebuildScheduled) {
+			return;
+		}
+		overlayRebuildScheduled = true;
+		requestAnimationFrame(() => {
+			overlayRebuildScheduled = false;
+			rebuildOrbitOverlayMesh();
+		});
+	}
+
 	function requestOrbitUpdate() {
 		if (activeOrbitSatelliteIndex === undefined) {
 			return;
 		}
-		latestOrbitRequestId += 1;
+		const requestId = nextOrbitRequestId();
+		latestFocusOrbitRequestId = requestId;
 		orbitWorker.postMessage({
 			type: 'process',
+			kind: 'focus',
 			satelliteIndex: activeOrbitSatelliteIndex,
-			requestId: latestOrbitRequestId,
+			requestId,
 			startTimeMs: Date.now(),
-			sampleCount: orbitSampleCount,
+			sampleCount: focusOrbitSampleCount,
 			closeLoop: true,
 			centerAroundStartTime: true
 		});
+	}
+
+	function requestOverlayOrbit(satelliteIndex: number, generation: number) {
+		orbitWorker.postMessage({
+			type: 'process',
+			kind: 'overlay',
+			satelliteIndex,
+			requestId: nextOrbitRequestId(),
+			generation,
+			startTimeMs: Date.now(),
+			sampleCount: overlayOrbitSampleCount,
+			closeLoop: true,
+			centerAroundStartTime: true
+		});
+	}
+
+	function pruneOrbitOverlayToVisible() {
+		let changed = false;
+		for (const satelliteIndex of [...orbitOverlayIndices]) {
+			if (visibility[satelliteIndex] > 0) {
+				continue;
+			}
+			orbitOverlayIndices.delete(satelliteIndex);
+			orbitOverlayPaths.delete(satelliteIndex);
+			changed = true;
+		}
+		if (changed) {
+			scheduleOrbitOverlayMeshRebuild();
+		}
+	}
+
+	function applyOrbitOverlay(noradCatIds: number[], mode: OrbitOverlayMode) {
+		const targetIndices = new Set<number>();
+		for (const noradCatId of noradCatIds) {
+			const satelliteIndex = satelliteIndexByNoradId.get(noradCatId);
+			if (satelliteIndex === undefined || visibility[satelliteIndex] === 0) {
+				continue;
+			}
+			targetIndices.add(satelliteIndex);
+		}
+
+		overlayOrbitGeneration += 1;
+		const generation = overlayOrbitGeneration;
+
+		if (mode === 'replace') {
+			let changed = false;
+			for (const satelliteIndex of [...orbitOverlayIndices]) {
+				if (targetIndices.has(satelliteIndex)) {
+					continue;
+				}
+				orbitOverlayIndices.delete(satelliteIndex);
+				orbitOverlayPaths.delete(satelliteIndex);
+				changed = true;
+			}
+			for (const satelliteIndex of targetIndices) {
+				orbitOverlayIndices.add(satelliteIndex);
+				requestOverlayOrbit(satelliteIndex, generation);
+			}
+			if (changed || targetIndices.size === 0) {
+				scheduleOrbitOverlayMeshRebuild();
+			}
+			return;
+		}
+
+		if (mode === 'add') {
+			for (const satelliteIndex of targetIndices) {
+				if (orbitOverlayIndices.has(satelliteIndex)) {
+					continue;
+				}
+				orbitOverlayIndices.add(satelliteIndex);
+				requestOverlayOrbit(satelliteIndex, generation);
+			}
+			return;
+		}
+
+		let changed = false;
+		for (const satelliteIndex of targetIndices) {
+			orbitOverlayIndices.delete(satelliteIndex);
+			if (orbitOverlayPaths.delete(satelliteIndex)) {
+				changed = true;
+			}
+		}
+		if (changed) {
+			scheduleOrbitOverlayMeshRebuild();
+		}
 	}
 
 	function startOrbitTracking(satelliteIndex: number) {
@@ -293,7 +498,7 @@ export const createScene = async (
 
 	function stopOrbitTracking() {
 		activeOrbitSatelliteIndex = undefined;
-		latestOrbitRequestId += 1;
+		latestFocusOrbitRequestId = -1;
 		if (orbitRefreshIntervalId !== undefined) {
 			window.clearInterval(orbitRefreshIntervalId);
 			orbitRefreshIntervalId = undefined;
@@ -306,30 +511,45 @@ export const createScene = async (
 		if (!data || data.type !== 'orbit-points') {
 			return;
 		}
-		if (data.requestId !== latestOrbitRequestId) {
+
+		if (data.kind === 'focus') {
+			if (data.requestId !== latestFocusOrbitRequestId) {
+				return;
+			}
+			if (data.satelliteIndex !== activeOrbitSatelliteIndex) {
+				return;
+			}
+			const orbitPoints = data.points.map((point) => new THREE.Vector3(point.y, point.z, point.x));
+			if (orbitPoints.length < 2) {
+				return;
+			}
+			disposeOrbitLine();
+			const newOrbitLine = createOrbitLine(orbitPoints, 0x90ee90, 0.95, 'orbitLine');
+			scene.add(newOrbitLine);
+			orbitLine = newOrbitLine;
 			return;
 		}
-		if (data.satelliteIndex !== activeOrbitSatelliteIndex) {
-			return;
+
+		if (data.kind === 'overlay') {
+			if (data.generation !== overlayOrbitGeneration) {
+				return;
+			}
+			if (!orbitOverlayIndices.has(data.satelliteIndex)) {
+				return;
+			}
+			if (!Array.isArray(data.points) || data.points.length < 2) {
+				return;
+			}
+			const positions = new Float32Array(data.points.length * 3);
+			let writeOffset = 0;
+			for (const point of data.points) {
+				positions[writeOffset++] = point.y;
+				positions[writeOffset++] = point.z;
+				positions[writeOffset++] = point.x;
+			}
+			orbitOverlayPaths.set(data.satelliteIndex, positions);
+			scheduleOrbitOverlayMeshRebuild();
 		}
-		const orbitPoints = data.points.map((point) => new THREE.Vector3(point.y, point.z, point.x));
-		if (orbitPoints.length < 2) {
-			return;
-		}
-		disposeOrbitLine();
-		const orbitGeometry = new THREE.BufferGeometry().setFromPoints(orbitPoints);
-		const orbitMaterial = new THREE.LineBasicMaterial({
-			color: 0x90ee90,
-			opacity: 0.95,
-			transparent: true
-		});
-		orbitMaterial.depthWrite = false;
-		orbitMaterial.depthTest = true;
-		const newOrbitLine = new THREE.Line(orbitGeometry, orbitMaterial);
-		newOrbitLine.name = 'orbitLine';
-		newOrbitLine.renderOrder = 1;
-		scene.add(newOrbitLine);
-		orbitLine = newOrbitLine;
 	};
 
 	const extrapolateFromVelocity = (nowMs: number) => {
@@ -590,11 +810,8 @@ export const createScene = async (
 		if (!Number.isInteger(noradCatId) || noradCatId <= 0) {
 			return false;
 		}
-		const index = satelliteData.findIndex(
-			(satellite, satelliteIndex) =>
-				satellite.norad_cat_id === noradCatId && visibility[satelliteIndex] > 0
-		);
-		if (index === -1) {
+		const index = satelliteIndexByNoradId.get(noradCatId);
+		if (index === undefined || visibility[index] === 0) {
 			return false;
 		}
 		selectSatellite(index);
@@ -720,6 +937,7 @@ export const createScene = async (
 			geometry.attributes.visibility.needsUpdate = true;
 		}
 		assignVisibleIndices();
+		pruneOrbitOverlayToVisible();
 		clearSelectionIfHidden();
 	});
 	// line to center
@@ -823,6 +1041,7 @@ export const createScene = async (
 			cancelAnimationFrame(animationFrameId); // Cancel the animation loop
 			satelliteWorkers.forEach((worker) => worker.terminate());
 			stopOrbitTracking();
+			disposeAllOrbitOverlayLines();
 			orbitWorker.terminate();
 			unsubscribeSharedData();
 			document.removeEventListener('visibilitychange', handleVisibilityChange);
@@ -838,7 +1057,8 @@ export const createScene = async (
 		focusNextVisibleSatellite: () => selectRelativeVisibleSatellite(1),
 		getVisibleCount: () => activeVisibleIndices.length,
 		focusEarth,
-		focusVisibleNoradId
+		focusVisibleNoradId,
+		applyOrbitOverlay
 	};
 };
 

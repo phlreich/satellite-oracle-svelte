@@ -18,3 +18,7 @@ Last Updated: 2026-02-07
 - `stopThinkingAnimationGracefully()` only defers during `typing`/`erasing`; if phase is `cursor`/`holding`, the indicator clears immediately.
 - The current Oracle mobile mode applies `.hidden` to the chat window (`isMobileView`), effectively disabling chat controls on mobile user agents.
 - Root route currently wraps the Oracle page directly (`src/routes/+page.svelte` imports `./oracle/+page.svelte`), so `/` and `/oracle` behavior is tightly coupled.
+- For long replies, scrolling chat to `scrollHeight` lands at the end of the assistant message; scrolling the latest `.message.assistant` into `block: start` keeps reading flow natural.
+- Orbit webs can piggyback on the existing orbit worker by tagging requests as `focus` vs `overlay`; the scene can then track one live focused orbit and many static overlay orbits in parallel.
+- Per-orbit draw calls are the FPS bottleneck for constellation-scale overlays; batching overlay segments into one `THREE.LineSegments` mesh keeps FPS higher without capping orbit count.
+- To preserve query continuity across turns without persisting NORAD arrays, return a compact `[tool-history]` assistant message (with SQL text) and append it as hidden chat history that is still forwarded to `/api/assist`.
