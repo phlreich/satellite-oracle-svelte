@@ -286,16 +286,29 @@
 			const rows = result.action.visibility.noradCatIds.map((id) => ({ NORAD_CAT_ID: id }));
 			sharedData.set([rows, result.action.visibility.mode]);
 		}
+		let assistantMessage = result.assistantMessage;
 		if (result.action?.focus) {
 			if (result.action.focus.target === 'earth') {
 				focusEarth();
 			} else {
-				focusVisibleNoradId(result.action.focus.noradCatId);
+				const targetNorad = result.action.focus.noradCatId;
+				let focusApplied = focusVisibleNoradId(targetNorad);
+				if (!focusApplied && !result.action?.visibility) {
+					sharedData.set([[{ NORAD_CAT_ID: targetNorad }], 'add']);
+					await tick();
+					focusApplied = focusVisibleNoradId(targetNorad);
+				}
+				if (!focusApplied) {
+					console.warn('Focus action could not be applied in current scene visibility.', {
+						noradCatId: targetNorad
+					});
+					assistantMessage += `\n\n(Focus could not be applied for NORAD ${targetNorad} in the current scene.)`;
+				}
 			}
 		}
 
 		chatHistory.update((history) => {
-			return [...history, { role: 'assistant', content: result.assistantMessage }];
+			return [...history, { role: 'assistant', content: assistantMessage }];
 		});
 		await tick();
 		messageContainer.scrollTop = messageContainer.scrollHeight;
