@@ -83,8 +83,12 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
 					? body.sceneContext.selectedNoradId
 					: null,
 			latestUserMessage,
-			messages: body.messages,
-			sceneContext: body.sceneContext ?? null
+			sceneVisibleCount:
+				typeof body.sceneContext?.visibleCount === 'number' ? body.sceneContext.visibleCount : null,
+			selectedInfoPanel:
+				typeof body.sceneContext?.selectedInfoPanel === 'string'
+					? body.sceneContext.selectedInfoPanel
+					: null
 		});
 
 		const result = await runAssist(body, { requestId });

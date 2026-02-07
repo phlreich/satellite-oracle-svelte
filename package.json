@@ -3,7 +3,8 @@
 	"version": "0.0.1",
 	"private": true,
 	"scripts": {
-		"dev": "vite dev",
+		"dev": "bash -lc 'mkdir -p logs; LOG_FILE=\"logs/dev-$(date +%Y%m%d-%H%M%S).log\"; echo \"[dev-log] $LOG_FILE\"; npm run dev:raw 2>&1 | tee -a \"$LOG_FILE\"; exit ${PIPESTATUS[0]}'",
+		"dev:raw": "vite dev",
 		"prebuild": "svelte-kit sync",
 		"build": "vite build",
 		"preview": "vite preview",

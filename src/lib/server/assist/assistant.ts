@@ -1,5 +1,7 @@
 import Database from 'better-sqlite3';
+import fs from 'node:fs/promises';
 import path from 'path';
+import { inspect } from 'node:util';
 import { OpenAI } from 'openai';
 import type {
 	EasyInputMessage,
@@ -38,6 +40,530 @@ const MAX_PREVIEW_ROWS = 80;
 const MAX_SAMPLE_ROWS = 40;
 const MAX_HISTORY_MESSAGES = 30;
 const MAX_SQL_RESULT_ROWS = 5000;
+const TRACE_ARRAY_PREVIEW = 80;
+const TRACE_OBJECT_KEYS_PREVIEW = 80;
+const TRACE_STRING_PREVIEW = 4000;
+const TRACE_TABLE_MAX_ROWS = 20;
+const TRACE_TABLE_MAX_COLUMNS = 9;
+const TRACE_TABLE_MAX_CELL = 120;
+
+type TraceEvent = {
+	title: string;
+	summary?: Record<string, unknown>;
+	details?: unknown;
+};
+
+function shortText(value: string, max = 180): string {
+	if (value.length <= max) {
+		return value;
+	}
+	return `${value.slice(0, max - 3)}...`;
+}
+
+function hasTruthyTraceFlag(value: string | undefined): boolean | null {
+	if (!value) {
+		return null;
+	}
+	const normalized = value.trim().toLowerCase();
+	if (normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on') {
+		return true;
+	}
+	if (normalized === '0' || normalized === 'false' || normalized === 'no' || normalized === 'off') {
+		return false;
+	}
+	return null;
+}
+
+function isAssistTraceEnabled(): boolean {
+	const explicit = hasTruthyTraceFlag(env.ASSIST_TRACE);
+	if (explicit !== null) {
+		return explicit;
+	}
+	return process.env.NODE_ENV !== 'production';
+}
+
+function isAssistFullLogEnabled(): boolean {
+	const explicit = hasTruthyTraceFlag(env.ASSIST_LOG_FULL);
+	if (explicit !== null) {
+		return explicit;
+	}
+	return process.env.NODE_ENV !== 'production';
+}
+
+function fileTimestamp(date = new Date()): string {
+	return date.toISOString().replace(/[:.]/g, '-');
+}
+
+function summarizeAction(action: AssistSceneAction): Record<string, unknown> {
+	return {
+		hasVisibilityAction: Boolean(action.visibility),
+		visibilityMode: action.visibility?.mode ?? null,
+		visibilityCount: action.visibility?.returnedCount ?? null,
+		hasFocusAction: Boolean(action.focus),
+		focusTarget: action.focus?.target ?? null,
+		focusNoradId: action.focus?.target === 'norad' ? action.focus.noradCatId : null
+	};
+}
+
+function compactActionForTrace(action: AssistSceneAction): Record<string, unknown> {
+	return {
+		visibility: action.visibility
+			? {
+					mode: action.visibility.mode,
+					returnedCount: action.visibility.returnedCount,
+					noradPreview: action.visibility.noradCatIds.slice(0, 20)
+				}
+			: null,
+		focus: action.focus ?? null
+	};
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function sanitizeForTrace(value: unknown, depth = 0): unknown {
+	if (
+		value === null ||
+		typeof value === 'number' ||
+		typeof value === 'boolean' ||
+		value === undefined
+	) {
+		return value;
+	}
+	if (typeof value === 'string') {
+		return value.length <= TRACE_STRING_PREVIEW
+			? value
+			: `${value.slice(0, TRACE_STRING_PREVIEW)}...<truncated>`;
+	}
+	if (depth >= 5) {
+		return '<max-depth>';
+	}
+	if (Array.isArray(value)) {
+		const trimmed = value
+			.slice(0, TRACE_ARRAY_PREVIEW)
+			.map((item) => sanitizeForTrace(item, depth + 1));
+		if (value.length > TRACE_ARRAY_PREVIEW) {
+			trimmed.push(`<${value.length - TRACE_ARRAY_PREVIEW} more items>`);
+		}
+		return trimmed;
+	}
+	const entries = Object.entries(value as Record<string, unknown>).slice(
+		0,
+		TRACE_OBJECT_KEYS_PREVIEW
+	);
+	const out: Record<string, unknown> = {};
+	for (const [key, item] of entries) {
+		out[key] = sanitizeForTrace(item, depth + 1);
+	}
+	if (Object.keys(value as Record<string, unknown>).length > TRACE_OBJECT_KEYS_PREVIEW) {
+		out.__truncated_keys__ = true;
+	}
+	return out;
+}
+
+function scalarText(value: unknown): string {
+	if (value === null || value === undefined) {
+		return String(value);
+	}
+	if (typeof value === 'string') {
+		return value.replace(/\s+/g, ' ').trim();
+	}
+	if (typeof value === 'number' || typeof value === 'boolean') {
+		return String(value);
+	}
+	const asJson = JSON.stringify(sanitizeForTrace(value));
+	if (typeof asJson === 'string') {
+		return asJson;
+	}
+	return inspect(value, { depth: 1, compact: true, breakLength: Number.POSITIVE_INFINITY });
+}
+
+function truncCell(value: string, max = TRACE_TABLE_MAX_CELL): string {
+	if (value.length <= max) {
+		return value;
+	}
+	return value;
+}
+
+function padRight(value: string, width: number): string {
+	if (value.length >= width) {
+		return value;
+	}
+	return `${value}${' '.repeat(width - value.length)}`;
+}
+
+function inferTypeLabel(value: unknown): string {
+	if (value === null || value === undefined) {
+		return 'null';
+	}
+	if (typeof value === 'string') {
+		return 'text';
+	}
+	if (typeof value === 'number') {
+		return Number.isInteger(value) ? 'int' : 'float';
+	}
+	if (typeof value === 'boolean') {
+		return 'bool';
+	}
+	if (Array.isArray(value)) {
+		return 'array';
+	}
+	return 'object';
+}
+
+function isTableScalar(value: unknown): boolean {
+	return (
+		value === null ||
+		value === undefined ||
+		typeof value === 'string' ||
+		typeof value === 'number' ||
+		typeof value === 'boolean'
+	);
+}
+
+function isTableFriendlyRows(rows: Record<string, unknown>[]): boolean {
+	return rows.every((row) => Object.values(row).every((value) => isTableScalar(value)));
+}
+
+function formatRowsTable(rows: Record<string, unknown>[]): string | null {
+	if (rows.length === 0) {
+		return null;
+	}
+	const allColumns = [...new Set(rows.flatMap((row) => Object.keys(row)))];
+	if (allColumns.length === 0) {
+		return null;
+	}
+	const shownColumns = allColumns.slice(0, TRACE_TABLE_MAX_COLUMNS);
+	const hasMoreColumns = allColumns.length > shownColumns.length;
+	const headers = hasMoreColumns ? [...shownColumns, '...'] : shownColumns;
+	const shownRows = rows.slice(0, TRACE_TABLE_MAX_ROWS);
+	const body = shownRows.map((row) => {
+		const cells = shownColumns.map((column) => truncCell(scalarText(row[column])));
+		if (hasMoreColumns) {
+			cells.push('...');
+		}
+		return cells;
+	});
+	if (rows.length > shownRows.length) {
+		const tail = headers.map(() => '...');
+		tail[0] = `... +${rows.length - shownRows.length} rows`;
+		body.push(tail);
+	}
+	const typeRow = shownColumns.map((column) => {
+		const sample = rows.find((row) => row[column] !== undefined)?.[column];
+		return inferTypeLabel(sample);
+	});
+	if (hasMoreColumns) {
+		typeRow.push('...');
+	}
+	const widths = headers.map((header, index) =>
+		Math.max(
+			header.length,
+			typeRow[index]?.length ?? 0,
+			...body.map((row) => row[index]?.length ?? 0)
+		)
+	);
+	const rowLine = (cells: string[]) =>
+		`│ ${cells.map((cell, index) => padRight(cell, widths[index])).join(' │ ')} │`;
+	const top = `┌${widths.map((width) => '─'.repeat(width + 2)).join('┬')}┐`;
+	const middle = `├${widths.map((width) => '─'.repeat(width + 2)).join('┼')}┤`;
+	const bottom = `└${widths.map((width) => '─'.repeat(width + 2)).join('┴')}┘`;
+	return [
+		top,
+		rowLine(headers),
+		rowLine(typeRow),
+		middle,
+		...body.map((row) => rowLine(row)),
+		bottom,
+		`${rows.length} rows (${Math.min(rows.length, TRACE_TABLE_MAX_ROWS)} shown), ${allColumns.length} columns (${shownColumns.length} shown)`
+	].join('\n');
+}
+
+function formatScalarList(values: unknown[], max = 20): string {
+	const shown = values.slice(0, max).map((item) => shortText(scalarText(item), 60));
+	if (values.length <= max) {
+		return shown.join(', ');
+	}
+	return `${shown.join(', ')} ... (+${values.length - max} more)`;
+}
+
+function markdownTextBlock(text: string): string {
+	return `\`\`\`text\n${text}\n\`\`\``;
+}
+
+function summaryValueText(value: unknown): string {
+	if (value === null || value === undefined) {
+		return String(value);
+	}
+	if (Array.isArray(value)) {
+		if (value.length === 0) {
+			return '[]';
+		}
+		if (value.every((item) => !isPlainObject(item) && !Array.isArray(item))) {
+			return formatScalarList(value, 6);
+		}
+		return `${value.length} items`;
+	}
+	if (isPlainObject(value)) {
+		return inspect(sanitizeForTrace(value), { depth: 1, compact: true, breakLength: 120 });
+	}
+	return scalarText(value);
+}
+
+function renderDetailSections(value: unknown): string[] {
+	if (value === null || value === undefined) {
+		return ['- (none)'];
+	}
+	if (!isPlainObject(value)) {
+		if (Array.isArray(value)) {
+			const tableRows = value.filter((item) => isPlainObject(item)) as Record<string, unknown>[];
+			if (
+				tableRows.length === value.length &&
+				tableRows.length > 0 &&
+				isTableFriendlyRows(tableRows)
+			) {
+				const table = formatRowsTable(tableRows);
+				return table ? [markdownTextBlock(table)] : [markdownTextBlock(inspect(value))];
+			}
+			return [markdownTextBlock(inspect(sanitizeForTrace(value), { depth: 4, compact: false }))];
+		}
+		if (typeof value === 'string') {
+			return [markdownTextBlock(shortText(value, TRACE_STRING_PREVIEW))];
+		}
+		return [markdownTextBlock(inspect(value, { depth: 4, compact: false, breakLength: 100 }))];
+	}
+	const lines: string[] = [];
+	const entries = Object.entries(value);
+	for (const [key, item] of entries) {
+		if (
+			item === null ||
+			item === undefined ||
+			typeof item === 'string' ||
+			typeof item === 'number' ||
+			typeof item === 'boolean'
+		) {
+			const valueText = scalarText(item);
+			if (valueText.length > 260) {
+				lines.push(`${key}:`);
+				lines.push(markdownTextBlock(valueText));
+			} else {
+				lines.push(`- ${key}: ${valueText}`);
+			}
+			continue;
+		}
+		if (
+			Array.isArray(item) &&
+			item.every((entry) => !isPlainObject(entry) && !Array.isArray(entry))
+		) {
+			lines.push(`- ${key}: ${formatScalarList(item, 20)}`);
+			continue;
+		}
+		lines.push(`${key}:`);
+		if (Array.isArray(item)) {
+			const tableRows = item.filter((entry) => isPlainObject(entry)) as Record<string, unknown>[];
+			if (
+				tableRows.length === item.length &&
+				tableRows.length > 0 &&
+				isTableFriendlyRows(tableRows)
+			) {
+				const table = formatRowsTable(tableRows);
+				lines.push(markdownTextBlock(table ?? inspect(item)));
+			} else {
+				lines.push(
+					markdownTextBlock(inspect(sanitizeForTrace(item), { depth: 4, compact: false }))
+				);
+			}
+			continue;
+		}
+		if (isPlainObject(item)) {
+			lines.push(markdownTextBlock(inspect(sanitizeForTrace(item), { depth: 4, compact: false })));
+			continue;
+		}
+		lines.push(markdownTextBlock(shortText(String(item), TRACE_STRING_PREVIEW)));
+	}
+	return lines;
+}
+
+function renderTraceMarkdown({
+	requestId,
+	model,
+	sceneContext,
+	messages,
+	events,
+	assistantMessage,
+	action,
+	startedAt,
+	finishedAt
+}: {
+	requestId: string;
+	model: string;
+	sceneContext: ReturnType<typeof normalizeSceneContext>;
+	messages: AssistRequestBody['messages'];
+	events: TraceEvent[];
+	assistantMessage: string;
+	action: AssistSceneAction;
+	startedAt: number;
+	finishedAt: number;
+}): string {
+	const latestUserMessage =
+		messages
+			.slice()
+			.reverse()
+			.find((message) => message.role === 'user')?.content ?? '';
+	const lines: string[] = [];
+	lines.push('# Assist Trace');
+	lines.push('');
+	lines.push(`- Request ID: \`${requestId}\``);
+	lines.push(`- Model: \`${model}\``);
+	lines.push(`- Started: \`${new Date(startedAt).toISOString()}\``);
+	lines.push(`- Finished: \`${new Date(finishedAt).toISOString()}\``);
+	lines.push(`- Duration: \`${finishedAt - startedAt} ms\``);
+	lines.push('');
+	lines.push('## User Message');
+	lines.push('');
+	lines.push(
+		`- Latest user message: ${latestUserMessage ? `\`${shortText(latestUserMessage, 400)}\`` : '`<none>`'}`
+	);
+	lines.push(`- Message count: \`${messages.length}\``);
+	lines.push('');
+	lines.push('<details><summary>Conversation</summary>');
+	lines.push('');
+	lines.push(
+		markdownTextBlock(
+			messages.map((msg, i) => `${i + 1}. ${msg.role}: ${msg.content}`).join('\n\n')
+		)
+	);
+	lines.push('');
+	lines.push('</details>');
+	lines.push('');
+	lines.push('## Scene Context');
+	lines.push('');
+	lines.push(`- selectedNoradId: \`${sceneContext.selectedNoradId}\``);
+	lines.push(`- visibleCount: \`${sceneContext.visibleCount}\``);
+	lines.push(`- selectedInfoPanel: \`${sceneContext.selectedInfoPanel}\``);
+	lines.push('');
+	lines.push('## Timeline');
+	lines.push('');
+	for (const [index, event] of events.entries()) {
+		lines.push(`### ${index + 1}. ${event.title}`);
+		lines.push('');
+		if (event.summary) {
+			for (const [key, val] of Object.entries(event.summary)) {
+				lines.push(`- ${key}: \`${shortText(summaryValueText(val), 200)}\``);
+			}
+			lines.push('');
+		}
+		if (event.details !== undefined) {
+			lines.push('<details><summary>Details</summary>');
+			lines.push('');
+			lines.push(...renderDetailSections(event.details));
+			lines.push('');
+			lines.push('</details>');
+			lines.push('');
+		}
+	}
+	lines.push('## Final Output');
+	lines.push('');
+	lines.push('assistantMessage:');
+	lines.push(markdownTextBlock(assistantMessage));
+	for (const [key, value] of Object.entries(summarizeAction(action))) {
+		lines.push(`- ${key}: \`${String(value)}\``);
+	}
+	lines.push('');
+	lines.push('<details><summary>Final action payload</summary>');
+	lines.push('');
+	lines.push(...renderDetailSections(compactActionForTrace(action)));
+	lines.push('');
+	lines.push('</details>');
+	lines.push('');
+	return lines.join('\n');
+}
+
+function summarizeToolArgs(
+	toolName: string,
+	toolArgs: Record<string, unknown>
+): Record<string, unknown> {
+	if (toolName === 'sql_select') {
+		return {
+			sql: typeof toolArgs.sql === 'string' ? shortText(toolArgs.sql, 220) : null,
+			preview_rows: toolArgs.preview_rows ?? null,
+			sample_rows: toolArgs.sample_rows ?? null
+		};
+	}
+	if (toolName === 'set_visibility_from_result') {
+		return {
+			result_ref: toolArgs.result_ref ?? null,
+			mode: toolArgs.mode ?? null,
+			id_column: toolArgs.id_column ?? null
+		};
+	}
+	if (toolName === 'set_visibility') {
+		const ids = normalizeNoradIds(toolArgs.norad_ids);
+		return {
+			mode: toolArgs.mode ?? null,
+			norad_count: ids.length,
+			norad_preview: ids.slice(0, 12)
+		};
+	}
+	if (toolName === 'set_focus') {
+		return {
+			target: toolArgs.target ?? null,
+			norad_id: toolArgs.norad_id ?? null
+		};
+	}
+	return { ...toolArgs };
+}
+
+function summarizeToolOutput(
+	toolName: string,
+	output: Record<string, unknown>
+): Record<string, unknown> {
+	if (toolName === 'sql_select') {
+		return {
+			ok: output.ok ?? null,
+			row_count: output.row_count ?? null,
+			columns: Array.isArray(output.columns) ? output.columns.length : null,
+			result_ref: output.result_ref ?? null,
+			truncated: output.truncated ?? null
+		};
+	}
+	if (toolName === 'set_visibility' || toolName === 'set_visibility_from_result') {
+		return {
+			ok: output.ok ?? null,
+			mode: output.mode ?? null,
+			returned_count: output.returned_count ?? null,
+			id_column: output.id_column ?? null
+		};
+	}
+	if (toolName === 'set_focus') {
+		return {
+			ok: output.ok ?? null,
+			target:
+				typeof output.focus === 'object' && output.focus ? output.focus : (output.target ?? null)
+		};
+	}
+	return output;
+}
+
+function summarizeFunctionCallOutputForTrace(
+	parsedOutput: Record<string, unknown>
+): Record<string, unknown> {
+	return {
+		ok: parsedOutput.ok ?? null,
+		result_ref: parsedOutput.result_ref ?? null,
+		row_count: parsedOutput.row_count ?? null,
+		returned_count: parsedOutput.returned_count ?? null,
+		mode: parsedOutput.mode ?? null,
+		id_column: parsedOutput.id_column ?? null,
+		columns:
+			Array.isArray(parsedOutput.columns) &&
+			parsedOutput.columns.every((value) => typeof value === 'string')
+				? parsedOutput.columns
+				: null,
+		keys: Object.keys(parsedOutput)
+	};
+}
 
 const SQL_SELECT_TOOL: FunctionTool = {
 	type: 'function',
@@ -331,7 +857,33 @@ function summarizeTools(tools: FunctionTool[]) {
 	return tools.map((tool) => tool.name);
 }
 
-function serializeResponseOutput(response: Response) {
+function summarizeResponseForTrace(response: Response): Record<string, unknown> {
+	const functionCalls = response.output
+		.filter((item) => item.type === 'function_call')
+		.map((item) => ({
+			name: item.name,
+			call_id: item.call_id,
+			arguments_summary: summarizeToolArgs(item.name, parseToolArgs(item.arguments))
+		}));
+	const assistantMessages = response.output
+		.filter((item) => item.type === 'message')
+		.map((item) => ({
+			role: item.role,
+			text: item.content
+				.filter((entry) => entry.type === 'output_text')
+				.map((entry) => entry.text)
+				.join('\n')
+		}))
+		.filter((message) => message.text.trim() !== '');
+	return {
+		response_id: response.id ?? null,
+		function_calls: functionCalls,
+		assistant_messages: assistantMessages,
+		output_text: response.output_text ?? ''
+	};
+}
+
+function serializeResponseOutputForFullLog(response: Response): unknown[] {
 	return response.output.map((item) => {
 		if (item.type === 'function_call') {
 			return {
@@ -350,6 +902,23 @@ function serializeResponseOutput(response: Response) {
 		}
 		return item;
 	});
+}
+
+function summarizeResponseForLog(response: Response): Record<string, unknown> {
+	const functionCalls = response.output
+		.filter((item) => item.type === 'function_call')
+		.map((item) => ({
+			name: item.name,
+			callId: item.call_id
+		}));
+	return {
+		responseId: response.id ?? null,
+		outputItems: response.output.length,
+		functionCallCount: functionCalls.length,
+		functionCallNames: functionCalls.map((call) => call.name).join(', ') || 'none',
+		hasOutputText: Boolean(response.output_text && response.output_text.trim() !== ''),
+		outputTextPreview: response.output_text ? shortText(response.output_text, 180) : ''
+	};
 }
 
 function resolveCaseInsensitiveColumn(row: Record<string, unknown>, wanted: string): string | null {
@@ -412,7 +981,9 @@ async function executeToolCall({
 	toolArgs,
 	queryResults,
 	pendingAction,
-	logger
+	logger,
+	traceEvent,
+	fullLog
 }: {
 	db: Database.Database;
 	toolName: string;
@@ -420,8 +991,14 @@ async function executeToolCall({
 	queryResults: Map<string, QueryResultStore>;
 	pendingAction: AssistSceneAction;
 	logger: ReturnType<typeof createLogger>;
+	traceEvent?: (event: TraceEvent) => void;
+	fullLog?: (message: string, meta?: Record<string, unknown>) => void;
 }) {
 	logger.info('assist tool execution started', {
+		toolName,
+		toolArgs: summarizeToolArgs(toolName, toolArgs)
+	});
+	fullLog?.('assist tool execution started full', {
 		toolName,
 		toolArgs
 	});
@@ -466,6 +1043,33 @@ async function executeToolCall({
 				columns: columns.length,
 				resultRef,
 				durationMs: Date.now() - startedAt
+			});
+			fullLog?.('sql_select executed full', {
+				sql,
+				previewRowsRequested: previewRows,
+				sampleRowsRequested: sampleRows,
+				rows,
+				columns,
+				resultRef,
+				rowCapReached
+			});
+			traceEvent?.({
+				title: 'Tool result: sql_select',
+				summary: {
+					result_ref: resultRef,
+					row_count: rows.length,
+					column_count: columns.length,
+					duration_ms: Date.now() - startedAt
+				},
+				details: {
+					sql,
+					result_ref: resultRef,
+					row_count: rows.length,
+					columns,
+					preview_rows: preview.slice(0, 20),
+					preview_rows_shown: Math.min(preview.length, 20),
+					row_cap_reached: rowCapReached
+				}
 			});
 			return {
 				ok: true,
@@ -517,8 +1121,28 @@ async function executeToolCall({
 		logger.info('visibility action prepared from result', {
 			mode,
 			returnedCount: extraction.ids.length,
+			resolvedColumn: extraction.resolvedColumn
+		});
+		fullLog?.('visibility action prepared from result full', {
+			mode,
+			returnedCount: extraction.ids.length,
 			resolvedColumn: extraction.resolvedColumn,
 			noradCatIds: extraction.ids
+		});
+		traceEvent?.({
+			title: 'Tool result: set_visibility_from_result',
+			summary: {
+				mode,
+				returned_count: extraction.ids.length,
+				id_column: extraction.resolvedColumn
+			},
+			details: {
+				mode,
+				result_ref: resultRef,
+				id_column: extraction.resolvedColumn,
+				returned_count: extraction.ids.length,
+				norad_preview: extraction.ids.slice(0, 50)
+			}
 		});
 		return {
 			ok: true,
@@ -540,7 +1164,20 @@ async function executeToolCall({
 			returnedCount: noradIds.length
 		};
 		logger.info('visibility action prepared', { mode, returnedCount: noradIds.length });
-		logger.info('visibility IDs prepared', { noradCatIds: noradIds });
+		fullLog?.('visibility action prepared full', {
+			mode,
+			returnedCount: noradIds.length,
+			noradCatIds: noradIds
+		});
+		traceEvent?.({
+			title: 'Tool result: set_visibility',
+			summary: { mode, returned_count: noradIds.length },
+			details: {
+				mode,
+				returned_count: noradIds.length,
+				norad_preview: noradIds.slice(0, 50)
+			}
+		});
 		return { ok: true, mode, returned_count: noradIds.length };
 	}
 
@@ -564,6 +1201,15 @@ async function executeToolCall({
 		}
 		pendingAction.focus = focus;
 		logger.info('focus action prepared', focus);
+		fullLog?.('focus action prepared full', focus);
+		traceEvent?.({
+			title: 'Tool result: set_focus',
+			summary: {
+				target: focus.target,
+				norad_id: focus.target === 'norad' ? focus.noradCatId : null
+			},
+			details: focus
+		});
 		return { ok: true, focus };
 	}
 
@@ -598,8 +1244,9 @@ export async function runAssist(
 	const db = openReadDatabase();
 	const model = env.OPENAI_ASSIST_MODEL || 'gpt-5-mini';
 	const sceneContext = normalizeSceneContext(body.sceneContext);
+	const requestId = options?.requestId ?? 'unknown';
 	const logger = createLogger('assist.executor', {
-		requestId: options?.requestId ?? 'unknown',
+		requestId,
 		model
 	});
 	const input = buildPlannerInput(body);
@@ -607,12 +1254,49 @@ export async function runAssist(
 	const instructions = buildInstructions({ sceneContext, databaseContext });
 	const queryResults = new Map<string, QueryResultStore>();
 	const action: AssistSceneAction = {};
+	const traceEnabled = isAssistTraceEnabled();
+	const fullLogEnabled = isAssistFullLogEnabled();
+	const traceStartedAt = Date.now();
+	const traceEvents: TraceEvent[] = [];
+	const pushTrace = (event: TraceEvent) => {
+		if (traceEnabled) {
+			traceEvents.push(event);
+		}
+	};
+	const fullLog = (message: string, meta?: Record<string, unknown>) => {
+		if (fullLogEnabled) {
+			logger.info(message, meta);
+		}
+	};
 
 	try {
+		const latestUserMessage =
+			body.messages
+				.slice()
+				.reverse()
+				.find((message) => message.role === 'user')?.content ?? '';
+		pushTrace({
+			title: 'Assist request accepted',
+			summary: {
+				message_count: body.messages.length,
+				selected_norad_id: sceneContext.selectedNoradId ?? null,
+				visible_count: sceneContext.visibleCount,
+				latest_user_message: shortText(latestUserMessage, 220)
+			},
+			details: {
+				messages: body.messages,
+				scene_context: sceneContext
+			}
+		});
+
 		logger.info('assist tool loop started', {
 			messageCount: input.length,
 			selectedNoradId: sceneContext.selectedNoradId,
 			visibleCount: sceneContext.visibleCount,
+			latestUserMessage: shortText(latestUserMessage, 180)
+		});
+		fullLog('assist tool loop started full', {
+			messageCount: input.length,
 			messages: body.messages,
 			sceneContext,
 			input,
@@ -628,8 +1312,28 @@ export async function runAssist(
 		};
 		logger.info('openai responses.create request', {
 			step: 'initial',
-			payload: {
-				...initialRequest,
+			model,
+			inputItems: input.length,
+			toolNames: summarizeTools(ASSIST_TOOLS),
+			instructionsChars: instructions.length
+		});
+		fullLog('openai responses.create request full', {
+			step: 'initial',
+			payload: initialRequest
+		});
+		pushTrace({
+			title: 'OpenAI request: initial',
+			summary: {
+				model,
+				input_items: input.length,
+				tool_count: ASSIST_TOOLS.length,
+				instructions_chars: instructions.length
+			},
+			details: {
+				model,
+				input,
+				instructions_preview: shortText(instructions, 1200),
+				instructions_chars: instructions.length,
 				tools: summarizeTools(ASSIST_TOOLS)
 			}
 		});
@@ -641,9 +1345,18 @@ export async function runAssist(
 		}
 		logger.info('openai responses.create response', {
 			step: 'initial',
+			...summarizeResponseForLog(response)
+		});
+		fullLog('openai responses.create response full', {
+			step: 'initial',
 			responseId: response.id ?? null,
 			outputText: response.output_text ?? '',
-			output: serializeResponseOutput(response)
+			output: serializeResponseOutputForFullLog(response)
+		});
+		pushTrace({
+			title: 'OpenAI response: initial',
+			summary: summarizeResponseForLog(response),
+			details: summarizeResponseForTrace(response)
 		});
 
 		for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
@@ -657,8 +1370,27 @@ export async function runAssist(
 				toolCalls: functionCalls.length,
 				functionCalls: functionCalls.map((call) => ({
 					name: call.name,
+					callId: call.call_id
+				}))
+			});
+			fullLog('assist executing tool round full', {
+				round,
+				toolCalls: functionCalls.length,
+				functionCalls: functionCalls.map((call) => ({
+					name: call.name,
 					callId: call.call_id,
-					arguments: call.arguments
+					argumentsRaw: call.arguments
+				}))
+			});
+			pushTrace({
+				title: `Tool round ${round}`,
+				summary: {
+					tool_calls: functionCalls.length
+				},
+				details: functionCalls.map((call) => ({
+					name: call.name,
+					call_id: call.call_id,
+					arguments: parseToolArgs(call.arguments)
 				}))
 			});
 
@@ -674,8 +1406,24 @@ export async function runAssist(
 					round,
 					toolName: call.name,
 					callId: call.call_id,
+					toolArgs: summarizeToolArgs(call.name, args)
+				});
+				fullLog('assist tool call received full', {
+					round,
+					toolName: call.name,
+					callId: call.call_id,
 					argumentsRaw: call.arguments,
 					argumentsParsed: args
+				});
+				pushTrace({
+					title: `Tool call: ${call.name}`,
+					summary: {
+						round,
+						call_id: call.call_id
+					},
+					details: {
+						arguments: args
+					}
 				});
 				const output = await executeToolCall({
 					db,
@@ -683,9 +1431,17 @@ export async function runAssist(
 					toolArgs: args,
 					queryResults,
 					pendingAction: action,
-					logger
+					logger,
+					traceEvent: pushTrace,
+					fullLog
 				});
 				logger.info('assist tool call output', {
+					round,
+					toolName: call.name,
+					callId: call.call_id,
+					output: summarizeToolOutput(call.name, output)
+				});
+				fullLog('assist tool call output full', {
 					round,
 					toolName: call.name,
 					callId: call.call_id,
@@ -707,9 +1463,30 @@ export async function runAssist(
 			logger.info('openai responses.create request', {
 				step: 'followup',
 				round,
-				payload: {
-					...followupRequest,
-					tools: summarizeTools(ASSIST_TOOLS)
+				model,
+				previousResponseId: response.id ?? null,
+				inputItems: toolOutputs.length,
+				toolNames: summarizeTools(ASSIST_TOOLS)
+			});
+			fullLog('openai responses.create request full', {
+				step: 'followup',
+				round,
+				payload: followupRequest
+			});
+			pushTrace({
+				title: `OpenAI request: followup round ${round}`,
+				summary: {
+					model,
+					previous_response_id: response.id ?? null,
+					input_items: toolOutputs.length
+				},
+				details: {
+					model,
+					previous_response_id: response.id ?? null,
+					tool_outputs: toolOutputs.map((item) => ({
+						call_id: item.call_id,
+						output: summarizeFunctionCallOutputForTrace(JSON.parse(item.output))
+					}))
 				}
 			});
 			try {
@@ -721,9 +1498,19 @@ export async function runAssist(
 			logger.info('openai responses.create response', {
 				step: 'followup',
 				round,
+				...summarizeResponseForLog(response)
+			});
+			fullLog('openai responses.create response full', {
+				step: 'followup',
+				round,
 				responseId: response.id ?? null,
 				outputText: response.output_text ?? '',
-				output: serializeResponseOutput(response)
+				output: serializeResponseOutputForFullLog(response)
+			});
+			pushTrace({
+				title: `OpenAI response: followup round ${round}`,
+				summary: summarizeResponseForLog(response),
+				details: summarizeResponseForTrace(response)
 			});
 		}
 
@@ -734,12 +1521,54 @@ export async function runAssist(
 				: buildFallbackMessage(action);
 
 		logger.info('assist tool loop completed', {
-			hasVisibilityAction: Boolean(action.visibility),
-			hasFocusAction: Boolean(action.focus),
-			visibilityCount: action.visibility?.returnedCount ?? null,
-			action,
-			assistantMessage
+			...summarizeAction(action),
+			assistantMessagePreview: shortText(assistantMessage, 180)
 		});
+		fullLog('assist tool loop completed full', {
+			...summarizeAction(action),
+			assistantMessage,
+			action
+		});
+		pushTrace({
+			title: 'Assist completed',
+			summary: {
+				...summarizeAction(action),
+				assistant_message_preview: shortText(assistantMessage, 180)
+			},
+			details: {
+				assistant_message: assistantMessage,
+				action: compactActionForTrace(action)
+			}
+		});
+
+		if (traceEnabled) {
+			const traceDir = path.join(process.cwd(), 'logs', 'assist');
+			const safeRequestId = requestId.replace(/[^a-zA-Z0-9_-]/g, '_');
+			const traceFilePath = path.join(
+				traceDir,
+				`${fileTimestamp(new Date(traceStartedAt))}-${safeRequestId}.md`
+			);
+			try {
+				await fs.mkdir(traceDir, { recursive: true });
+				const traceBody = renderTraceMarkdown({
+					requestId,
+					model,
+					sceneContext,
+					messages: body.messages,
+					events: traceEvents,
+					assistantMessage,
+					action,
+					startedAt: traceStartedAt,
+					finishedAt: Date.now()
+				});
+				await fs.writeFile(traceFilePath, traceBody, 'utf8');
+				logger.info('assist trace written', {
+					tracePath: path.relative(process.cwd(), traceFilePath)
+				});
+			} catch (error) {
+				logger.warn('assist trace write failed', { error: serializeError(error) });
+			}
+		}
 
 		return {
 			assistantMessage,
