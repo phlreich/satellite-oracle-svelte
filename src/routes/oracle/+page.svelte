@@ -380,14 +380,15 @@
 		background: #000;
 		overflow: hidden;
 		overscroll-behavior: none;
+		font-family: Consolas, 'Courier New', 'Liberation Mono', monospace;
 	}
 
 	textarea {
 		resize: none;
+		font-family: inherit;
 	}
 
 	.chat-window {
-		border: 10px solid rgba(255, 255, 255, 0.1);
 		box-sizing: border-box;
 		display: flex;
 		flex-direction: column;
@@ -396,36 +397,54 @@
 		bottom: 10px;
 		right: 10px;
 		color: white;
-		background: rgba(0, 0, 0, 0.8);
-		padding: 15px;
-		border-radius: 10px;
-		box-shadow: 0 4px 8px rgba(0, 0, 0, 0.5);
+		background: rgba(0, 0, 0, 0.9);
+		padding: 12px;
 		max-height: 60vh;
 		max-width: calc(100vw - 590px);
 		overflow: hidden;
 		width: 550px;
 		height: 350px;
 		border: 1px solid white;
-		font-size: x-large;
+		font-size: large;
 	}
 
 	.message-container {
 		overflow-y: auto;
 		flex-grow: 1;
-		margin-bottom: 15px;
+		margin-bottom: 10px;
+		scrollbar-width: thin;
+		scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
+	}
+
+	.message-container::-webkit-scrollbar {
+		width: 4px;
+	}
+
+	.message-container::-webkit-scrollbar-track {
+		background: transparent;
+	}
+
+	.message-container::-webkit-scrollbar-thumb {
+		background: rgba(255, 255, 255, 0.25);
 	}
 
 	.input-field {
 		color: white;
 		background: rgba(0, 0, 0, 0.9);
-		padding: 10px;
-		margin-right: 10px;
-		padding-right: 10px;
-		border-radius: 5px;
-		border: 1px solid #ccc;
-		font-size: x-large;
+		padding: 8px;
+		margin-right: 8px;
+		border: 1px solid rgba(255, 255, 255, 0.4);
+		font-size: large;
 		width: 100%;
 		box-sizing: border-box;
+	}
+
+	.input-field::placeholder {
+		color: rgba(255, 255, 255, 0.3);
+	}
+
+	.input-field:focus {
+		border-color: white;
 	}
 
 	.input-field,
@@ -441,31 +460,40 @@
 	}
 
 	.message {
-		background: #556272;
-		border-radius: 10px;
-		padding: 10px;
-		margin-bottom: 10px;
+		padding: 8px 10px;
+		margin-bottom: 8px;
 		word-wrap: break-word;
+		border-left: 2px solid rgba(255, 255, 255, 0.2);
+		background: rgba(255, 255, 255, 0.03);
+		font-size: 0.92em;
+		line-height: 1.5;
 	}
 
 	.message.user {
-		background: #2a5562;
 		text-align: right;
+		border-left: none;
+		border-right: 2px solid rgba(255, 255, 255, 0.5);
+		background: rgba(255, 255, 255, 0.06);
 	}
 
 	.reset-button {
-		padding: 5px 15px;
-		border-radius: 5px;
-		border: 1px solid #ccc;
-		color: white;
+		padding: 5px 12px;
+		border: 1px solid rgba(255, 255, 255, 0.4);
+		color: rgba(255, 255, 255, 0.7);
 		background: rgba(0, 0, 0, 0.9);
 		outline: none;
-		font-size: medium;
+		font-size: small;
+		font-family: inherit;
+		text-transform: uppercase;
+		letter-spacing: 0.1em;
+		cursor: pointer;
+		white-space: nowrap;
 	}
 
 	.reset-button:hover {
-		background-color: #232121; /* Change background on hover */
-		border-color: #aaa;
+		background-color: #232121;
+		border-color: white;
+		color: white;
 	}
 
 	.satellite-info {
@@ -477,8 +505,21 @@
 		color: white;
 		background: rgba(0, 0, 0, 0.9);
 		padding: 10px 90px 10px 10px;
-		border-radius: 5px;
 		border: 1px solid white;
+	}
+
+	.satellite-info h2 {
+		margin: 0 0 4px 0;
+		font-size: large;
+		font-weight: normal;
+		letter-spacing: 0.05em;
+	}
+
+	.satellite-info pre {
+		margin: 2px 0;
+		font-family: inherit;
+		font-size: 0.85em;
+		color: rgba(255, 255, 255, 0.7);
 	}
 
 	.satellite-nav {
@@ -486,29 +527,29 @@
 		right: 10px;
 		bottom: 10px;
 		display: flex;
-		gap: 6px;
+		gap: 4px;
 	}
 
 	.nav-button {
-		width: 30px;
-		height: 30px;
+		width: 28px;
+		height: 28px;
 		padding: 0;
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
-		border-radius: 5px;
-		border: 1px solid #ccc;
+		border: 1px solid rgba(255, 255, 255, 0.4);
 		color: white;
 		background: rgba(0, 0, 0, 0.9);
 		outline: none;
-		font-size: 20px;
+		font-size: 16px;
 		line-height: 1;
 		cursor: pointer;
+		font-family: inherit;
 	}
 
 	.nav-button:hover {
 		background-color: #232121;
-		border-color: #aaa;
+		border-color: white;
 	}
 
 	.visible {
