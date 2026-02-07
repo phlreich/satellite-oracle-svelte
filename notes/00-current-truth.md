@@ -2,7 +2,7 @@
 
 Last Updated: 2026-02-07
 Repo: `/home/phlreich/satellite-oracle-svelte`
-Head Commit: `6234a6a`
+
 
 ## What Works Now
 - `/api/assist` runs a direct Responses API tool loop with no planner/executor split.

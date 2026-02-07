@@ -30,6 +30,13 @@ Last Updated: 2026-02-07
 - `ASSIST_TRACE=1` to write readable markdown traces under `logs/assist/`.
 - `ASSIST_TRACE=0` to disable markdown trace files.
 
+## Assist Hard Limits
+- API rejects `/api/assist` payloads over `50_000` bytes by `content-length`.
+- API rejects assist bodies with more than `40` chat messages.
+- Runtime trims forwarded chat history to the last `30` messages.
+- Runtime allows up to `8` tool rounds per request.
+- `sql_select` stops after `5000` rows and marks `truncated=true`.
+
 ## Quick Log Queries
 - Latest dev log: `ls -1t logs/dev-*.log | head -n 1`
 - Latest assist trace: `ls -1t logs/assist/*.md | head -n 1`

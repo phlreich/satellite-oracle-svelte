@@ -8,7 +8,7 @@ Repo: `/home/phlreich/satellite-oracle-svelte`
 - `07-notes-maintenance-protocol.md`
 
 ## Status Snapshot
-- Branch head is `6234a6a`.
+- Branch head is `97cb9d6`.
 - `/api/assist` uses a direct multi-tool Responses loop.
 - Runtime supports SQL analysis + scene visibility updates + scene focus updates in one turn.
 - Dev logs now capture full assist payloads while `logs/assist/*.md` keeps readable compact traces.

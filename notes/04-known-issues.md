@@ -14,4 +14,5 @@ Last Updated: 2026-02-07
 - Nightly DISCOS refresh currently reloads full enrichment tables and depends on external API availability/rate limits.
 - Dev startup may intentionally skip external refresh when tables are already populated, so stale local data can persist until scheduled/manual refresh.
 - Build-and-swap refresh doubles temporary disk usage while `satellite.next.db` is being built.
+- Startup initialization failures are logged but not process-fatal, so degraded behavior can appear later at request time.
 - Root and `/oracle` route duplication adds avoidable complexity.
