@@ -5,9 +5,12 @@
 		<link rel="icon" href="%sveltekit.assets%/sat.svg" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		%sveltekit.head%
-		<style>
-			/* Loading screen - inline for instant display */
-			#loading-screen {
+			<style>
+				:root {
+					--cursor-blink-duration: 0.6s;
+				}
+				/* Loading screen - inline for instant display */
+				#loading-screen {
 				position: fixed;
 				inset: 0;
 				z-index: 99999;
@@ -25,19 +28,20 @@
 			}
 			.loader-text {
 				color: white;
+				font-family: Consolas, 'Courier New', 'Liberation Mono', monospace;
 				font-size: x-large;
 				letter-spacing: 0.25em;
 				text-transform: uppercase;
 			}
-			.loader-cursor {
-				display: inline-block;
-				width: 0.6em;
-				height: 1.1em;
-				background: white;
-				vertical-align: text-bottom;
-				margin-left: 0.15em;
-				animation: blink 1s step-end infinite;
-			}
+				.loader-cursor {
+					display: inline-block;
+					width: 0.6em;
+					height: 1.1em;
+					background: white;
+					vertical-align: text-bottom;
+					margin-left: 0.15em;
+					animation: blink var(--cursor-blink-duration, 0.6s) step-end infinite;
+				}
 			@keyframes blink {
 				0%, 100% { opacity: 1; }
 				50% { opacity: 0; }

@@ -138,7 +138,211 @@
 		satrec?: SatRec;
 	} | null>(null);
 	const inputValue = writable('');
+	let assistPending = false;
+	let thinkingPhrase = '';
+	let thinkingPhraseQueue: string[] = [];
+	let thinkingDisplay = '';
+	let thinkingRevealTimeoutId: number | undefined;
+	let thinkingTypeIntervalId: number | undefined;
+	type ThinkingPhase = 'idle' | 'cursor' | 'typing' | 'holding' | 'erasing';
+	let thinkingPhase: ThinkingPhase = 'idle';
+	let thinkingStopRequested = false;
+	let thinkingStopResolver: (() => void) | undefined;
+	const thinkingPhrases = [
+		'QUERYING CATALOG',
+		'SCANNING TELEMETRY',
+		'PARSING EPHEMERIS',
+		'CORRELATING TRACKS',
+		'INTERROGATING DATABASE',
+		'PROPAGATING ORBITS',
+		'CONSULTING THE ORACLE',
+		'CROSS-REFERENCING OBJECTS',
+		'RESOLVING ELEMENTS',
+		'ACQUIRING SIGNAL',
+		'AWAITING DOWNLINK',
+		'REDUCING OBSERVATIONS',
+		'REMEMBERING',
+		'STILL LOOKING',
+		'SECOND PASS',
+		'VALIDATING EPOCHS',
+		'REBUILDING CONTEXT',
+		'INDEXING DISTANCE',
+		'CENSORING MANIFOLD'
+	];
+	const atmosphericPhrases: ReadonlySet<string> = new Set([
+		'AWAITING DOWNLINK',
+		'ACQUIRING SIGNAL',
+		'STILL LOOKING',
+		'REMEMBERING',
+		'SECOND PASS'
+	]);
+	const THINKING_CURSOR_ONLY_BLINKS = 2;
+	const THINKING_BETWEEN_PHRASES_BLINKS = 1;
+	const THINKING_TYPE_INTERVAL_MS = 70;
+	const THINKING_HOLD_FULL_MS = 6000;
+	const THINKING_ERASE_INTERVAL_MS = 45;
+	const FALLBACK_CURSOR_BLINK_MS = 800;
 	let isMobileView = false;
+
+	function getCursorBlinkDurationMs() {
+		const rawValue = getComputedStyle(document.documentElement)
+			.getPropertyValue('--cursor-blink-duration')
+			.trim();
+		if (!rawValue) {
+			return FALLBACK_CURSOR_BLINK_MS;
+		}
+		if (rawValue.endsWith('ms')) {
+			const parsed = Number(rawValue.slice(0, -2));
+			return Number.isFinite(parsed) ? parsed : FALLBACK_CURSOR_BLINK_MS;
+		}
+		if (rawValue.endsWith('s')) {
+			const parsed = Number(rawValue.slice(0, -1)) * 1000;
+			return Number.isFinite(parsed) ? parsed : FALLBACK_CURSOR_BLINK_MS;
+		}
+		const parsed = Number(rawValue);
+		return Number.isFinite(parsed) ? parsed : FALLBACK_CURSOR_BLINK_MS;
+	}
+
+	function stopThinkingAnimation() {
+		if (thinkingRevealTimeoutId !== undefined) {
+			window.clearTimeout(thinkingRevealTimeoutId);
+			thinkingRevealTimeoutId = undefined;
+		}
+		if (thinkingTypeIntervalId !== undefined) {
+			window.clearInterval(thinkingTypeIntervalId);
+			thinkingTypeIntervalId = undefined;
+		}
+		thinkingDisplay = '';
+		thinkingPhase = 'idle';
+		thinkingStopRequested = false;
+		if (thinkingStopResolver) {
+			thinkingStopResolver();
+			thinkingStopResolver = undefined;
+		}
+	}
+
+	function stopThinkingAnimationGracefully() {
+		thinkingStopRequested = true;
+		if (thinkingPhase === 'typing' || thinkingPhase === 'erasing') {
+			return new Promise<void>((resolve) => {
+				if (thinkingStopResolver) {
+					const previousResolver = thinkingStopResolver;
+					thinkingStopResolver = () => {
+						previousResolver();
+						resolve();
+					};
+					return;
+				}
+				thinkingStopResolver = resolve;
+			});
+		}
+		stopThinkingAnimation();
+		return Promise.resolve();
+	}
+
+	function shufflePhrases(avoid?: string): string[] {
+		const pool = thinkingPhrases.slice();
+		for (let i = pool.length - 1; i > 0; i--) {
+			const j = Math.floor(Math.random() * (i + 1));
+			[pool[i], pool[j]] = [pool[j], pool[i]];
+		}
+		// Spread atmospheric phrases so none are adjacent.
+		for (let i = 0; i < pool.length - 1; i++) {
+			if (atmosphericPhrases.has(pool[i]) && atmosphericPhrases.has(pool[i + 1])) {
+				// Find nearest non-atmospheric phrase after i+1 to swap with.
+				for (let j = i + 2; j < pool.length; j++) {
+					if (!atmosphericPhrases.has(pool[j])) {
+						[pool[i + 1], pool[j]] = [pool[j], pool[i + 1]];
+						break;
+					}
+				}
+			}
+		}
+		if (avoid && pool.length > 1 && pool[0] === avoid) {
+			const swapIndex = 1 + Math.floor(Math.random() * (pool.length - 1));
+			[pool[0], pool[swapIndex]] = [pool[swapIndex], pool[0]];
+		}
+		return pool;
+	}
+
+	function nextThinkingPhrase() {
+		if (thinkingPhraseQueue.length === 0) {
+			thinkingPhraseQueue = shufflePhrases(thinkingPhrase);
+		}
+		return thinkingPhraseQueue.shift()!;
+	}
+
+	function queueThinkingCycle(cursorOnlyMs: number) {
+		thinkingDisplay = '';
+		thinkingPhrase = nextThinkingPhrase();
+		thinkingPhase = 'cursor';
+		thinkingRevealTimeoutId = window.setTimeout(() => {
+			if (!assistPending) {
+				stopThinkingAnimation();
+				return;
+			}
+			if (thinkingStopRequested) {
+				stopThinkingAnimation();
+				return;
+			}
+			thinkingPhase = 'typing';
+			let charIndex = 0;
+			thinkingTypeIntervalId = window.setInterval(() => {
+				charIndex += 1;
+				thinkingDisplay = thinkingPhrase.slice(0, charIndex);
+				if (charIndex < thinkingPhrase.length) {
+					return;
+				}
+				if (thinkingTypeIntervalId !== undefined) {
+					window.clearInterval(thinkingTypeIntervalId);
+					thinkingTypeIntervalId = undefined;
+				}
+				if (thinkingStopRequested) {
+					stopThinkingAnimation();
+					return;
+				}
+				thinkingPhase = 'holding';
+				thinkingRevealTimeoutId = window.setTimeout(() => {
+					if (!assistPending) {
+						stopThinkingAnimation();
+						return;
+					}
+					if (thinkingStopRequested) {
+						stopThinkingAnimation();
+						return;
+					}
+					let eraseIndex = thinkingPhrase.length;
+					thinkingPhase = 'erasing';
+					thinkingTypeIntervalId = window.setInterval(() => {
+						eraseIndex -= 1;
+						thinkingDisplay = thinkingPhrase.slice(0, Math.max(eraseIndex, 0));
+						if (eraseIndex > 0) {
+							return;
+						}
+						if (thinkingTypeIntervalId !== undefined) {
+							window.clearInterval(thinkingTypeIntervalId);
+							thinkingTypeIntervalId = undefined;
+						}
+						if (thinkingStopRequested) {
+							stopThinkingAnimation();
+							return;
+						}
+						const betweenPhrasesMs =
+							getCursorBlinkDurationMs() * THINKING_BETWEEN_PHRASES_BLINKS;
+						queueThinkingCycle(betweenPhrasesMs);
+					}, THINKING_ERASE_INTERVAL_MS);
+				}, THINKING_HOLD_FULL_MS);
+			}, THINKING_TYPE_INTERVAL_MS);
+		}, cursorOnlyMs);
+	}
+
+	function startThinkingAnimation() {
+		stopThinkingAnimation();
+		thinkingStopRequested = false;
+		const cursorOnlyMs = getCursorBlinkDurationMs() * THINKING_CURSOR_ONLY_BLINKS;
+		queueThinkingCycle(cursorOnlyMs);
+	}
+
 	function hideLoadingScreen() {
 		const loadingScreen = document.getElementById('loading-screen');
 		if (loadingScreen) {
@@ -191,6 +395,7 @@
 	onDestroy(() => {
 		chatWindow.removeEventListener('mousemove', updateCursor);
 		chatWindow.removeEventListener('mousedown', initDrag);
+		stopThinkingAnimation();
 		if (latLongIntervalId !== undefined) {
 			window.clearInterval(latLongIntervalId);
 		}
@@ -257,7 +462,7 @@
 	}
 
 	async function handleKeyUp(event: { key: string }) {
-		if (event.key !== 'Enter') {
+		if (event.key !== 'Enter' || assistPending) {
 			return;
 		}
 		const userChatInput = $inputValue.trim();
@@ -269,10 +474,14 @@
 			return [...history, { role: 'user', content: userChatInput }];
 		});
 		$inputValue = '';
+		assistPending = true;
+		startThinkingAnimation();
 		await tick();
 		messageContainer.scrollTop = messageContainer.scrollHeight;
 
 		const result = await assistChat(get(chatHistory));
+		await stopThinkingAnimationGracefully();
+		assistPending = false;
 		if (!result) {
 			chatHistory.update((history) => {
 				return [...history, { role: 'assistant', content: 'Request failed. Please try again.' }];
@@ -359,6 +568,11 @@
 				</div>
 			{/if}
 		{/each}
+		{#if assistPending}
+			<div class="message assistant thinking">
+				{thinkingDisplay}<span class="thinking-cursor"></span>
+			</div>
+		{/if}
 	</div>
 	<div class="input-area">
 		<textarea
@@ -366,6 +580,7 @@
 			bind:value={$inputValue}
 			placeholder="Type anything..."
 			on:keyup={handleKeyUp}
+			disabled={assistPending}
 		></textarea>
 		<button class="reset-button" on:click={resetChat}>Reset Chat</button>
 	</div>
@@ -447,6 +662,11 @@
 		border-color: white;
 	}
 
+	.input-field:disabled {
+		opacity: 0.4;
+		cursor: default;
+	}
+
 	.input-field,
 	.reset-button {
 		outline: none;
@@ -474,6 +694,30 @@
 		border-left: none;
 		border-right: 2px solid rgba(255, 255, 255, 0.5);
 		background: rgba(255, 255, 255, 0.06);
+	}
+
+	.message.thinking {
+		padding: 8px 10px;
+		display: flex;
+		align-items: center;
+		gap: 0.2em;
+		font-size: 0.78em;
+		line-height: 1;
+		letter-spacing: 0.12em;
+		color: rgba(255, 255, 255, 0.5);
+	}
+
+	.thinking-cursor {
+		display: inline-block;
+		width: 0.45em;
+		height: 1em;
+		background: rgba(255, 255, 255, 0.5);
+		animation: blink var(--cursor-blink-duration, 0.8s) step-end infinite;
+	}
+
+	@keyframes blink {
+		0%, 100% { opacity: 1; }
+		50% { opacity: 0; }
 	}
 
 	.reset-button {
