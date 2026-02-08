@@ -312,7 +312,10 @@ export async function updateCSVs(username?: string, password?: string) {
 				cookie,
 				`https://www.space-track.org/basicspacedata/query/class/${dataset}/format/csv`
 			);
-			await fs.writeFile(`${process.cwd()}/src/data/${dataset}.csv`, data, 'utf8');
+			const datasetPath = `${process.cwd()}/src/data/${dataset}.csv`;
+			const tempDatasetPath = `${datasetPath}.tmp`;
+			await fs.writeFile(tempDatasetPath, data, 'utf8');
+			await fs.rename(tempDatasetPath, datasetPath);
 			dbLogger.debug('dataset CSV refreshed', { dataset, bytes: data.length });
 		}
 		dbLogger.info('CSV refresh completed', { durationMs: Date.now() - startedAt });
