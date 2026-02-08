@@ -668,7 +668,7 @@
 		background: rgba(0, 0, 0, 0.9);
 		padding: 12px;
 		max-height: 60vh;
-		max-width: calc(100vw - 590px);
+		max-width: calc(100vw - 20px);
 		overflow: hidden;
 		width: 550px;
 		height: 350px;
@@ -680,12 +680,14 @@
 		overflow-y: auto;
 		flex-grow: 1;
 		margin-bottom: 10px;
+		/* Firefox */
 		scrollbar-width: thin;
-		scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
+		scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
 	}
 
+	/* Chromium / Safari */
 	.message-container::-webkit-scrollbar {
-		width: 4px;
+		width: 5px;
 	}
 
 	.message-container::-webkit-scrollbar-track {
@@ -693,7 +695,21 @@
 	}
 
 	.message-container::-webkit-scrollbar-thumb {
-		background: rgba(255, 255, 255, 0.25);
+		background: rgba(255, 255, 255, 0.15);
+		border-radius: 9999px;
+		transition: background 0.2s;
+	}
+
+	.message-container::-webkit-scrollbar-thumb:hover {
+		background: rgba(255, 255, 255, 0.4);
+	}
+
+	.message-container::-webkit-scrollbar-thumb:active {
+		background: rgba(255, 255, 255, 0.55);
+	}
+
+	.message-container::-webkit-scrollbar-corner {
+		background: transparent;
 	}
 
 	.input-field {
@@ -705,6 +721,29 @@
 		font-size: large;
 		width: 100%;
 		box-sizing: border-box;
+		scrollbar-width: thin;
+		scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+	}
+
+	.input-field::-webkit-scrollbar {
+		width: 5px;
+	}
+
+	.input-field::-webkit-scrollbar-track {
+		background: transparent;
+	}
+
+	.input-field::-webkit-scrollbar-thumb {
+		background: rgba(255, 255, 255, 0.15);
+		border-radius: 9999px;
+	}
+
+	.input-field::-webkit-scrollbar-thumb:hover {
+		background: rgba(255, 255, 255, 0.4);
+	}
+
+	.input-field::-webkit-scrollbar-thumb:active {
+		background: rgba(255, 255, 255, 0.55);
 	}
 
 	.input-field::placeholder {
@@ -795,14 +834,16 @@
 
 	.satellite-info {
 		position: absolute;
-		min-width: 350px;
-		max-width: 99vw;
+		min-width: 0;
+		max-width: calc(100vw - 20px);
+		width: 350px;
 		bottom: 10px;
 		left: 10px;
 		color: white;
 		background: rgba(0, 0, 0, 0.9);
 		padding: 10px 90px 10px 10px;
 		border: 1px solid white;
+		box-sizing: border-box;
 	}
 
 	.satellite-info h2 {
@@ -878,5 +919,95 @@
 
 	.resize-nesw {
 		cursor: nesw-resize;
+	}
+
+	/* ── Responsive: medium viewports (≤900px) ── */
+	@media (max-width: 900px) {
+		.chat-window {
+			width: calc(100vw - 20px);
+			max-width: none;
+			right: 10px;
+			left: 10px;
+			bottom: 10px;
+			height: 250px;
+			max-height: 40vh;
+			font-size: medium;
+		}
+
+		.satellite-info {
+			width: auto;
+			max-width: calc(100vw - 20px);
+			left: 10px;
+			right: 10px;
+			bottom: auto;
+			top: 10px;
+			padding: 8px 70px 8px 8px;
+		}
+
+		.satellite-info h2 {
+			font-size: medium;
+		}
+
+		.satellite-info pre {
+			font-size: 0.78em;
+		}
+
+		.input-field {
+			font-size: medium;
+		}
+
+		.message {
+			font-size: 0.85em;
+			padding: 6px 8px;
+		}
+	}
+
+	/* ── Responsive: small viewports (≤550px) ── */
+	@media (max-width: 550px) {
+		.chat-window {
+			padding: 8px;
+			height: 200px;
+			max-height: 35vh;
+			font-size: small;
+		}
+
+		.satellite-info {
+			padding: 6px 60px 6px 6px;
+		}
+
+		.satellite-info h2 {
+			font-size: small;
+			letter-spacing: 0;
+		}
+
+		.satellite-info pre {
+			font-size: 0.72em;
+		}
+
+		.input-field {
+			font-size: small;
+			padding: 6px;
+		}
+
+		.reset-button {
+			padding: 4px 8px;
+			font-size: x-small;
+		}
+
+		.message {
+			font-size: 0.78em;
+			padding: 5px 6px;
+			margin-bottom: 6px;
+		}
+
+		.message.thinking {
+			font-size: 0.68em;
+		}
+
+		.nav-button {
+			width: 24px;
+			height: 24px;
+			font-size: 14px;
+		}
 	}
 </style>
