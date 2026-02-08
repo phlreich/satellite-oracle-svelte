@@ -28,6 +28,7 @@ Repo: `/home/phlreich/satellite-oracle-svelte`
 - UI/scene details: `03-ui-scene-navigation.md`
 - Risks: `04-known-issues.md`
 - History: `05-change-log.md`
+- Visual design: `09-design.md`
 
 ## Commit Gate
 Follow `07-notes-maintenance-protocol.md`.
