@@ -33,13 +33,13 @@ function openReadDatabase() {
 	return db;
 }
 
-const MAX_TOOL_ROUNDS = 8;
-const DEFAULT_PREVIEW_ROWS = 30;
+const MAX_TOOL_ROUNDS = 3;
+const SQL_SELECT_BUDGET = Math.max(0, MAX_TOOL_ROUNDS - 1);
+const DEFAULT_PREVIEW_ROWS = 10;
 const DEFAULT_SAMPLE_ROWS = 20;
-const MAX_PREVIEW_ROWS = 80;
-const MAX_SAMPLE_ROWS = 40;
-const MAX_HISTORY_MESSAGES = 30;
-const MAX_SQL_RESULT_ROWS = 5000;
+const MAX_PREVIEW_ROWS = 20;
+const MAX_SAMPLE_ROWS = 30;
+const MAX_HISTORY_MESSAGES = 18;
 const TRACE_ARRAY_PREVIEW = 80;
 const TRACE_OBJECT_KEYS_PREVIEW = 80;
 const TRACE_STRING_PREVIEW = 4000;
@@ -494,6 +494,20 @@ function summarizeToolArgs(
 	toolName: string,
 	toolArgs: Record<string, unknown>
 ): Record<string, unknown> {
+	if (toolName === 'set_visibility_sql') {
+		return {
+			sql: typeof toolArgs.sql === 'string' ? shortText(toolArgs.sql, 220) : null,
+			mode: toolArgs.mode ?? null,
+			id_column: toolArgs.id_column ?? null,
+			set_orbits_mode: toolArgs.set_orbits_mode ?? null,
+			focus_target: toolArgs.focus_target ?? null,
+			focus_norad_id: toolArgs.focus_norad_id ?? null,
+			assistant_message:
+				typeof toolArgs.assistant_message === 'string'
+					? shortText(toolArgs.assistant_message, 140)
+					: null
+		};
+	}
 	if (toolName === 'sql_select') {
 		return {
 			sql: typeof toolArgs.sql === 'string' ? shortText(toolArgs.sql, 220) : null,
@@ -544,6 +558,24 @@ function summarizeToolOutput(
 	toolName: string,
 	output: Record<string, unknown>
 ): Record<string, unknown> {
+	if (toolName === 'set_visibility_sql') {
+		return {
+			ok: output.ok ?? null,
+			mode: output.mode ?? null,
+			returned_count: output.returned_count ?? null,
+			row_count: output.row_count ?? null,
+			id_column: output.id_column ?? null,
+			orbit_mode: output.orbit_mode ?? null,
+			assistant_message:
+				typeof output.assistant_message === 'string'
+					? shortText(output.assistant_message, 140)
+					: null,
+			focus_target:
+				typeof output.focus === 'object' && output.focus
+					? (output.focus as { target?: string }).target ?? null
+					: null
+		};
+	}
 	if (toolName === 'sql_select') {
 		return {
 			ok: output.ok ?? null,
@@ -581,6 +613,10 @@ function formatToolHistoryEntry(
 	toolArgs: Record<string, unknown>,
 	output: Record<string, unknown>
 ): string {
+	if (toolName === 'set_visibility_sql') {
+		const sql = typeof toolArgs.sql === 'string' ? toolArgs.sql.trim() : '';
+		return `set_visibility_sql mode=${toolArgs.mode ?? null} row_count=${output.row_count ?? null} returned_count=${output.returned_count ?? null} id_column=${output.id_column ?? null} set_orbits_mode=${toolArgs.set_orbits_mode ?? null} focus_target=${toolArgs.focus_target ?? null} focus_norad_id=${toolArgs.focus_norad_id ?? null} assistant_message=${JSON.stringify(typeof toolArgs.assistant_message === 'string' ? shortText(toolArgs.assistant_message, 90) : null)} sql=${JSON.stringify(sql)}`;
+	}
 	if (toolName === 'sql_select') {
 		const sql = typeof toolArgs.sql === 'string' ? toolArgs.sql.trim() : '';
 		const rowCount = output.row_count ?? null;
@@ -616,6 +652,10 @@ function summarizeFunctionCallOutputForTrace(
 		returned_count: parsedOutput.returned_count ?? null,
 		mode: parsedOutput.mode ?? null,
 		id_column: parsedOutput.id_column ?? null,
+		assistant_message:
+			typeof parsedOutput.assistant_message === 'string'
+				? shortText(parsedOutput.assistant_message, 140)
+				: null,
 		columns:
 			Array.isArray(parsedOutput.columns) &&
 			parsedOutput.columns.every((value) => typeof value === 'string')
@@ -629,7 +669,7 @@ const SQL_SELECT_TOOL: FunctionTool = {
 	type: 'function',
 	name: 'sql_select',
 	description:
-		'Execute one read-only SELECT query against SQLite. Returns row count, columns, preview rows, random sample rows, and a result_ref.',
+		`Execute one read-only SELECT query against SQLite for analysis before deciding what to show. Returns row count, columns, preview rows, random sample rows, and a result_ref. This analysis tool can be used at most ${SQL_SELECT_BUDGET} times per request; once exhausted, you must use an action tool.`,
 	strict: false,
 	parameters: {
 		type: 'object',
@@ -639,6 +679,28 @@ const SQL_SELECT_TOOL: FunctionTool = {
 			sample_rows: { type: 'number' }
 		},
 		required: ['sql'],
+		additionalProperties: false
+	}
+};
+
+const SET_VISIBILITY_SQL_TOOL: FunctionTool = {
+	type: 'function',
+	name: 'set_visibility_sql',
+	description:
+		'Fast path: run one read-only SELECT, extract NORAD IDs, and apply scene visibility immediately. Use this for obvious requests like debris filters to minimize latency. Optional orbit and focus updates can be applied in the same call. Provide assistant_message when you want to answer the user in this same call.',
+	strict: false,
+	parameters: {
+		type: 'object',
+		properties: {
+			sql: { type: 'string' },
+			mode: { type: 'string', enum: ['replace', 'add', 'remove'] },
+			id_column: { type: 'string' },
+			set_orbits_mode: { type: 'string', enum: ['replace', 'add', 'remove'] },
+			focus_target: { type: 'string', enum: ['earth', 'first_result', 'norad'] },
+			focus_norad_id: { type: 'number' },
+			assistant_message: { type: 'string' }
+		},
+		required: ['sql', 'mode'],
 		additionalProperties: false
 	}
 };
@@ -734,6 +796,7 @@ const SET_FOCUS_TOOL: FunctionTool = {
 };
 
 const ASSIST_TOOLS: FunctionTool[] = [
+	SET_VISIBILITY_SQL_TOOL,
 	SQL_SELECT_TOOL,
 	SET_VISIBILITY_FROM_RESULT_TOOL,
 	SET_VISIBILITY_TOOL,
@@ -741,6 +804,22 @@ const ASSIST_TOOLS: FunctionTool[] = [
 	SET_ORBITS_TOOL,
 	SET_FOCUS_TOOL
 ];
+
+const ASSIST_TOOLS_NO_ANALYSIS: FunctionTool[] = [
+	SET_VISIBILITY_SQL_TOOL,
+	SET_VISIBILITY_FROM_RESULT_TOOL,
+	SET_VISIBILITY_TOOL,
+	SET_ORBITS_FROM_RESULT_TOOL,
+	SET_ORBITS_TOOL,
+	SET_FOCUS_TOOL
+];
+
+const FAST_ACTION_TOOL_NAMES = new Set([
+	'set_visibility_sql',
+	'set_visibility',
+	'set_orbits',
+	'set_focus'
+]);
 
 type QueryResultStore = {
 	rows: Record<string, unknown>[];
@@ -805,6 +884,17 @@ function parseToolArgs(text: string): Record<string, unknown> {
 		// ignore
 	}
 	return {};
+}
+
+function normalizeAssistantMessage(value: unknown): string | null {
+	if (typeof value !== 'string') {
+		return null;
+	}
+	const trimmed = value.trim();
+	if (trimmed.length === 0) {
+		return null;
+	}
+	return trimmed.slice(0, 600);
 }
 
 function normalizeMode(value: unknown): AssistSelectionMode | null {
@@ -878,51 +968,52 @@ function buildPlannerInput(body: AssistRequestBody): EasyInputMessage[] {
 	] as EasyInputMessage[];
 }
 
-function toTextSummary(rows: Record<string, unknown>[]): string {
-	if (rows.length === 0) {
-		return '[]';
-	}
-	return JSON.stringify(sanitizeRowsForModel(rows));
-}
-
 function buildDatabaseContext(db: Database.Database) {
-	const tableRows = db
+	const semanticViewRows = db
 		.prepare(
-			"SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+			"SELECT name FROM sqlite_master WHERE type = 'view' AND name LIKE 'semantic_%' ORDER BY name"
 		)
 		.all() as Array<{ name: string }>;
 
-	const previewQueries: Record<string, string> = {
-		gp: 'SELECT NORAD_CAT_ID, OBJECT_NAME, OBJECT_TYPE, COUNTRY_CODE, LAUNCH_DATE, APOAPSIS, PERIAPSIS, PERIOD FROM gp LIMIT 5',
-		satcat:
-			'SELECT NORAD_CAT_ID, OBJECT_NAME, OBJECT_TYPE, COUNTRY, LAUNCH, SITE, APOGEE, PERIGEE FROM satcat LIMIT 5',
-		boxscore:
-			'SELECT COUNTRY, ORBITAL_TOTAL_COUNT, ORBITAL_PAYLOAD_COUNT, ORBITAL_DEBRIS_COUNT, COUNTRY_TOTAL FROM boxscore ORDER BY COUNTRY_TOTAL DESC LIMIT 5',
-		discos_objects:
-			'SELECT norad_cat_id, cospar_id, name, object_class, mission, launch_cospar_no, launch_epoch, launch_vehicle_name, launch_site_name FROM discos_objects LIMIT 5',
-		discos_object_entities:
-			'SELECT norad_cat_id, role, entity_type, entity_name FROM discos_object_entities LIMIT 5'
-	};
+	if (semanticViewRows.length > 0) {
+		const parts = ['Database schema summary (prefer semantic views):'];
+		for (const view of semanticViewRows) {
+			const viewName = view.name;
+			const columns = db.prepare(`PRAGMA table_info(${viewName})`).all() as Array<{
+				name: string;
+				type: string;
+			}>;
+			const shown = columns.slice(0, 18).map((col) => col.name).join(', ');
+			const remainder = columns.length > 18 ? ` (+${columns.length - 18} more)` : '';
+			parts.push(`- ${viewName}: ${shown}${remainder}`);
+		}
+		parts.push(
+			'- Join key: norad_cat_id across semantic_gp, semantic_satcat, semantic_discos_objects, semantic_discos_object_entities.'
+		);
+		parts.push(
+			'- Site naming: semantic_gp.launch_site_code and semantic_satcat.launch_site_code are site codes (e.g., TTMTR, VOSTO); use semantic_discos_objects.launch_site_name for human-readable names.'
+		);
+		return parts.join('\n');
+	}
 
-	const parts = ['Database snapshot:'];
+	const tableRows = db
+		.prepare(
+			"SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '__tmp_%' ORDER BY name"
+		)
+		.all() as Array<{ name: string }>;
+
+	const parts = ['Database schema summary:'];
 	for (const table of tableRows) {
 		const tableName = table.name;
-		const rowCount = db.prepare(`SELECT COUNT(*) as count FROM ${tableName}`).get() as {
-			count: number;
-		};
 		const columns = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{
 			name: string;
 			type: string;
 		}>;
-		const previewSql = previewQueries[tableName] ?? `SELECT * FROM ${tableName} LIMIT 3`;
-		const previewRows = db.prepare(previewSql).all() as Record<string, unknown>[];
-
-		parts.push(`- table ${tableName} (${rowCount.count} rows)`);
-		parts.push(
-			`  columns: ${columns.map((col) => `${col.name}${col.type ? ` ${col.type}` : ''}`).join(', ')}`
-		);
-		parts.push(`  preview: ${toTextSummary(previewRows)}`);
+		const shown = columns.slice(0, 14).map((col) => col.name).join(', ');
+		const remainder = columns.length > 14 ? ` (+${columns.length - 14} more)` : '';
+		parts.push(`- ${tableName}: ${shown}${remainder}`);
 	}
+	parts.push('- Join key: norad_cat_id / NORAD_CAT_ID across gp, satcat, discos_objects.');
 
 	return parts.join('\n');
 }
@@ -936,19 +1027,7 @@ function buildInstructions({
 }): string {
 	return [
 		'You are the Satellite Oracle assistant.',
-		'Use tools aggressively to inspect data and update the scene in one turn when useful.',
-		'You can run only read-only SQL through sql_select. Use sql_select for analysis before acting.',
-		'For large result sets, use set_visibility_from_result instead of manually listing IDs.',
-		'When the user asks for orbit trails, use set_orbits_from_result (or set_orbits) in the same turn.',
-		'For requests like "show X with orbits", pair visibility and orbit actions on the same subset.',
-		"When the user asks to focus an object, call set_focus with target='norad' and norad_id.",
-		"When the user asks to focus Earth, call set_focus with target='earth'.",
-		'When the user asks to see objects, prefer applying a visibility action instead of returning long lists.',
-		'Limit exploration to at most two SQL probes before deciding on an action or asking one concise clarification.',
-		'Avoid schema-probing queries against sqlite_master unless absolutely necessary.',
-		'You may call multiple tools before your final answer.',
-		'Keep the final answer concise and explicit about scene changes applied.',
-		'For launch provider or operator/owner requests, prefer discos_objects and discos_object_entities first.',
+		`sql_select may be used at most ${SQL_SELECT_BUDGET} times per request; then you must use an action tool.`,
 		`Scene context: ${JSON.stringify(sceneContext)}.`,
 		databaseContext
 	].join('\n');
@@ -956,6 +1035,10 @@ function buildInstructions({
 
 function summarizeTools(tools: FunctionTool[]) {
 	return tools.map((tool) => tool.name);
+}
+
+function toolsForModelRound(modelRound: number): FunctionTool[] {
+	return modelRound < SQL_SELECT_BUDGET ? ASSIST_TOOLS : ASSIST_TOOLS_NO_ANALYSIS;
 }
 
 function summarizeResponseForTrace(response: Response): Record<string, unknown> {
@@ -1104,6 +1187,145 @@ async function executeToolCall({
 		toolArgs
 	});
 
+	if (toolName === 'set_visibility_sql') {
+		const mode = normalizeMode(toolArgs.mode);
+		if (!mode) {
+			return { ok: false, error: 'set_visibility_sql requires valid mode.' };
+		}
+		const assistantMessage = normalizeAssistantMessage(toolArgs.assistant_message);
+		const guardedSql = guardReadOnlySql(toolArgs.sql, DB_PATH);
+		if (!guardedSql.ok) {
+			return { ok: false, error: guardedSql.error };
+		}
+		const sql = guardedSql.sql;
+		try {
+			const startedAt = Date.now();
+			const stmt = db.prepare(sql);
+			if (!stmt.reader) {
+				return { ok: false, error: 'Query must return rows.' };
+			}
+			if (!stmt.readonly) {
+				return { ok: false, error: 'set_visibility_sql only allows read-only queries.' };
+			}
+			const rows: Record<string, unknown>[] = [];
+			for (const row of stmt.iterate() as IterableIterator<Record<string, unknown>>) {
+				rows.push(row);
+			}
+			const columns = stmt.columns().map((column) => column.name);
+			const idColumn = typeof toolArgs.id_column === 'string' ? toolArgs.id_column : undefined;
+			const extraction = extractNoradIdsFromRows({ rows, idColumn });
+			if (extraction.ids.length === 0 && mode !== 'replace') {
+				return {
+					ok: false,
+					error: 'Could not extract NORAD IDs for non-replace mode. Provide id_column.',
+					available_columns: columns
+				};
+			}
+			pendingAction.visibility = {
+				mode,
+				noradCatIds: extraction.ids,
+				returnedCount: extraction.ids.length
+			};
+			const orbitsMode = normalizeMode(toolArgs.set_orbits_mode);
+			if (orbitsMode) {
+				if (orbitsMode !== 'replace' && extraction.ids.length === 0) {
+					return {
+						ok: false,
+						error: 'set_orbits_mode requires NORAD IDs for add/remove.',
+						available_columns: columns
+					};
+				}
+				pendingAction.orbits = {
+					mode: orbitsMode,
+					noradCatIds: extraction.ids,
+					returnedCount: extraction.ids.length
+				};
+			}
+			const focusTarget = toolArgs.focus_target;
+			if (focusTarget === 'earth') {
+				pendingAction.focus = { target: 'earth' };
+			} else if (focusTarget === 'first_result') {
+				if (extraction.ids.length === 0) {
+					return { ok: false, error: 'focus_target=first_result requires at least one NORAD ID.' };
+				}
+				pendingAction.focus = { target: 'norad', noradCatId: extraction.ids[0] };
+			} else if (focusTarget === 'norad') {
+				const rawNorad = toolArgs.focus_norad_id;
+				const noradId =
+					typeof rawNorad === 'number' && Number.isFinite(rawNorad) ? Math.floor(rawNorad) : null;
+				if (!noradId || noradId <= 0) {
+					return { ok: false, error: 'focus_target=norad requires focus_norad_id.' };
+				}
+				pendingAction.focus = { target: 'norad', noradCatId: noradId };
+			}
+			const durationMs = Date.now() - startedAt;
+			logger.info('set_visibility_sql executed', {
+				mode,
+				rowCount: rows.length,
+				returnedCount: extraction.ids.length,
+				resolvedColumn: extraction.resolvedColumn,
+				orbitMode: pendingAction.orbits?.mode ?? null,
+				focusTarget: pendingAction.focus?.target ?? null,
+				assistantMessagePreview: assistantMessage ? shortText(assistantMessage, 120) : null,
+				durationMs
+			});
+			fullLog?.('set_visibility_sql executed full', {
+				sql,
+				mode,
+				rowCount: rows.length,
+				columns,
+				returnedCount: extraction.ids.length,
+				resolvedColumn: extraction.resolvedColumn,
+				noradCatIds: extraction.ids,
+				orbitMode: pendingAction.orbits?.mode ?? null,
+				focus: pendingAction.focus ?? null,
+				assistantMessage
+			});
+			traceEvent?.({
+				title: 'Tool result: set_visibility_sql',
+				summary: {
+					mode,
+					row_count: rows.length,
+					returned_count: extraction.ids.length,
+					id_column: extraction.resolvedColumn,
+					orbit_mode: pendingAction.orbits?.mode ?? null,
+					focus_target: pendingAction.focus?.target ?? null,
+					assistant_message: assistantMessage ? shortText(assistantMessage, 120) : null,
+					duration_ms: durationMs
+				},
+				details: {
+					sql,
+					mode,
+					row_count: rows.length,
+					columns,
+					id_column: extraction.resolvedColumn,
+					returned_count: extraction.ids.length,
+					norad_preview: extraction.ids.slice(0, 50),
+					orbit_mode: pendingAction.orbits?.mode ?? null,
+					focus: pendingAction.focus ?? null,
+					assistant_message: assistantMessage
+				}
+			});
+			return {
+				ok: true,
+				mode,
+				row_count: rows.length,
+				returned_count: extraction.ids.length,
+				id_column: extraction.resolvedColumn,
+				orbit_mode: pendingAction.orbits?.mode ?? null,
+				focus: pendingAction.focus ?? null,
+				columns,
+				assistant_message: assistantMessage
+			};
+		} catch (error) {
+			logger.warn('set_visibility_sql failed', { error: serializeError(error) });
+			return {
+				ok: false,
+				error: error instanceof Error ? error.message : 'SQL execution failed.'
+			};
+		}
+	}
+
 	if (toolName === 'sql_select') {
 		const guardedSql = guardReadOnlySql(toolArgs.sql, DB_PATH);
 		if (!guardedSql.ok) {
@@ -1122,13 +1344,8 @@ async function executeToolCall({
 				return { ok: false, error: 'sql_select only allows read-only queries.' };
 			}
 			const rows: Record<string, unknown>[] = [];
-			let rowCapReached = false;
 			for (const row of stmt.iterate() as IterableIterator<Record<string, unknown>>) {
 				rows.push(row);
-				if (rows.length >= MAX_SQL_RESULT_ROWS) {
-					rowCapReached = true;
-					break;
-				}
 			}
 			const columns = stmt.columns().map((column) => column.name);
 			const preview = rows.slice(0, previewRows);
@@ -1140,7 +1357,6 @@ async function executeToolCall({
 				previewRowsRequested: previewRows,
 				sampleRowsRequested: sampleRows,
 				rows: rows.length,
-				rowCapReached,
 				columns: columns.length,
 				resultRef,
 				durationMs: Date.now() - startedAt
@@ -1151,8 +1367,7 @@ async function executeToolCall({
 				sampleRowsRequested: sampleRows,
 				rows,
 				columns,
-				resultRef,
-				rowCapReached
+				resultRef
 			});
 			traceEvent?.({
 				title: 'Tool result: sql_select',
@@ -1168,8 +1383,7 @@ async function executeToolCall({
 					row_count: rows.length,
 					columns,
 					preview_rows: preview.slice(0, 20),
-					preview_rows_shown: Math.min(preview.length, 20),
-					row_cap_reached: rowCapReached
+					preview_rows_shown: Math.min(preview.length, 20)
 				}
 			});
 			return {
@@ -1179,8 +1393,8 @@ async function executeToolCall({
 				columns,
 				preview_rows: sanitizeRowsForModel(preview),
 				sample_rows: sanitizeRowsForModel(sample),
-				truncated: rowCapReached || rows.length > preview.length,
-				truncated_by_row_cap: rowCapReached
+				truncated: rows.length > preview.length,
+				truncated_by_row_cap: false
 			};
 		} catch (error) {
 			logger.warn('sql_select failed', { error: serializeError(error) });
@@ -1500,17 +1714,18 @@ export async function runAssist(
 		});
 
 		let response: Response;
+		const initialTools = toolsForModelRound(0);
 		const initialRequest = {
 			model,
 			instructions,
 			input,
-			tools: ASSIST_TOOLS
+			tools: initialTools
 		};
 		logger.info('openai responses.create request', {
 			step: 'initial',
 			model,
 			inputItems: input.length,
-			toolNames: summarizeTools(ASSIST_TOOLS),
+			toolNames: summarizeTools(initialTools),
 			instructionsChars: instructions.length
 		});
 		fullLog('openai responses.create request full', {
@@ -1522,7 +1737,7 @@ export async function runAssist(
 			summary: {
 				model,
 				input_items: input.length,
-				tool_count: ASSIST_TOOLS.length,
+				tool_count: initialTools.length,
 				instructions_chars: instructions.length
 			},
 			details: {
@@ -1530,7 +1745,7 @@ export async function runAssist(
 				input,
 				instructions_preview: shortText(instructions, 1200),
 				instructions_chars: instructions.length,
-				tools: summarizeTools(ASSIST_TOOLS)
+				tools: summarizeTools(initialTools)
 			}
 		});
 		try {
@@ -1554,6 +1769,8 @@ export async function runAssist(
 			summary: summarizeResponseForLog(response),
 			details: summarizeResponseForTrace(response)
 		});
+
+		let toolSuggestedAssistantMessage: string | null = null;
 
 		for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
 			const functionCalls = response.output.filter((item) => item.type === 'function_call');
@@ -1595,6 +1812,7 @@ export async function runAssist(
 				call_id: string;
 				output: string;
 			}>;
+			let anyToolFailed = false;
 
 			for (const call of functionCalls) {
 				const args = parseToolArgs(call.arguments);
@@ -1643,6 +1861,13 @@ export async function runAssist(
 					callId: call.call_id,
 					output
 				});
+				if (output.ok === false) {
+					anyToolFailed = true;
+				}
+				const suggestedMessage = normalizeAssistantMessage(output.assistant_message);
+				if (suggestedMessage && !toolSuggestedAssistantMessage) {
+					toolSuggestedAssistantMessage = suggestedMessage;
+				}
 				toolHistoryLines.push(formatToolHistoryEntry(call.name, args, output));
 				toolOutputs.push({
 					type: 'function_call_output',
@@ -1651,11 +1876,52 @@ export async function runAssist(
 				});
 			}
 
+			const hasOutputText =
+				typeof response.output_text === 'string' && response.output_text.trim() !== '';
+			const usedSqlSelect = functionCalls.some((call) => call.name === 'sql_select');
+			const fastOnly = functionCalls.every((call) => FAST_ACTION_TOOL_NAMES.has(call.name));
+			const roundZeroFastPath = round === 0 && fastOnly && !anyToolFailed && !usedSqlSelect;
+			if (roundZeroFastPath || (hasOutputText && !anyToolFailed && !usedSqlSelect)) {
+				logger.info('assist returning without followup', {
+					round,
+					toolCalls: functionCalls.length,
+					reason: roundZeroFastPath
+						? 'round_zero_fast_actions'
+						: 'assistant_text_present_and_no_sql_select'
+				});
+				pushTrace({
+					title: `Assist early return after round ${round}`,
+					summary: {
+						reason: roundZeroFastPath
+							? 'round_zero_fast_actions'
+							: 'assistant_text_present_and_no_sql_select'
+					}
+				});
+				break;
+			}
+
+			const nextModelRound = round + 1;
+			if (nextModelRound >= MAX_TOOL_ROUNDS) {
+				logger.info('assist stopping after final tool round', {
+					round,
+					toolCalls: functionCalls.length,
+					reason: 'max_tool_rounds_exhausted'
+				});
+				pushTrace({
+					title: `Assist stop after round ${round}`,
+					summary: {
+						reason: 'max_tool_rounds_exhausted'
+					}
+				});
+				break;
+			}
+
+			const followupTools = toolsForModelRound(nextModelRound);
 			const followupRequest = {
 				model,
 				previous_response_id: response.id,
 				input: toolOutputs,
-				tools: ASSIST_TOOLS
+				tools: followupTools
 			};
 			logger.info('openai responses.create request', {
 				step: 'followup',
@@ -1663,7 +1929,7 @@ export async function runAssist(
 				model,
 				previousResponseId: response.id ?? null,
 				inputItems: toolOutputs.length,
-				toolNames: summarizeTools(ASSIST_TOOLS)
+				toolNames: summarizeTools(followupTools)
 			});
 			fullLog('openai responses.create request full', {
 				step: 'followup',
@@ -1680,6 +1946,7 @@ export async function runAssist(
 				details: {
 					model,
 					previous_response_id: response.id ?? null,
+					tools: summarizeTools(followupTools),
 					tool_outputs: toolOutputs.map((item) => ({
 						call_id: item.call_id,
 						output: summarizeFunctionCallOutputForTrace(JSON.parse(item.output))
@@ -1728,7 +1995,7 @@ export async function runAssist(
 		const assistantMessage =
 			typeof response.output_text === 'string' && response.output_text.trim() !== ''
 				? response.output_text.trim()
-				: buildFallbackMessage(action);
+				: (toolSuggestedAssistantMessage ?? buildFallbackMessage(action));
 
 		logger.info('assist tool loop completed', {
 			...summarizeAction(action),

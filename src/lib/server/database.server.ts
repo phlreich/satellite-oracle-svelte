@@ -127,6 +127,134 @@ function createCoreTables(db: Database.Database) {
 	`);
 }
 
+function ensureSemanticViews(db: Database.Database) {
+	db.exec(`
+		DROP VIEW IF EXISTS semantic_boxscore;
+		CREATE VIEW semantic_boxscore AS
+		SELECT
+			COUNTRY AS owner_name,
+			SPADOC_CD AS owner_code,
+			ORBITAL_TBA AS orbital_unassigned_count,
+			ORBITAL_PAYLOAD_COUNT AS orbital_payload_count,
+			ORBITAL_ROCKET_BODY_COUNT AS orbital_rocket_body_count,
+			ORBITAL_DEBRIS_COUNT AS orbital_debris_count,
+			ORBITAL_TOTAL_COUNT AS orbital_total_count,
+			DECAYED_PAYLOAD_COUNT AS decayed_payload_count,
+			DECAYED_ROCKET_BODY_COUNT AS decayed_rocket_body_count,
+			DECAYED_DEBRIS_COUNT AS decayed_debris_count,
+			DECAYED_TOTAL_COUNT AS decayed_total_count,
+			COUNTRY_TOTAL AS total_object_count
+		FROM boxscore;
+
+		DROP VIEW IF EXISTS semantic_satcat;
+		CREATE VIEW semantic_satcat AS
+		SELECT
+			INTLDES AS object_cospar_id,
+			NORAD_CAT_ID AS norad_cat_id,
+			OBJECT_TYPE AS object_type,
+			SATNAME AS object_name,
+			COUNTRY AS owner_code,
+			LAUNCH AS launch_date,
+			SITE AS launch_site_code,
+			DECAY AS decay_date,
+			PERIOD AS orbital_period_min,
+			INCLINATION AS inclination_deg,
+			APOGEE AS apogee_km,
+			PERIGEE AS perigee_km,
+			COMMENT AS legacy_comment_text,
+			COMMENTCODE AS legacy_comment_code,
+			RCSVALUE AS legacy_rcs_numeric_value,
+			RCS_SIZE AS rcs_size_class,
+			FILE AS source_file_id,
+			LAUNCH_YEAR AS launch_year,
+			LAUNCH_NUM AS launch_sequence_number,
+			LAUNCH_PIECE AS launch_piece_code,
+			CURRENT AS current_flag,
+			CASE WHEN CURRENT = 'Y' THEN 1 ELSE 0 END AS is_current_record,
+			OBJECT_NAME AS object_name_dup,
+			OBJECT_ID AS object_cospar_id_dup,
+			OBJECT_NUMBER AS norad_cat_id_dup
+		FROM satcat;
+
+		DROP VIEW IF EXISTS semantic_gp;
+		CREATE VIEW semantic_gp AS
+		SELECT
+			CCSDS_OMM_VERS AS omm_version,
+			COMMENT AS source_comment,
+			CREATION_DATE AS element_created_at_utc,
+			ORIGINATOR AS element_originator,
+			OBJECT_NAME AS object_name,
+			OBJECT_ID AS object_cospar_id,
+			CENTER_NAME AS reference_center_name,
+			REF_FRAME AS reference_frame,
+			TIME_SYSTEM AS time_system,
+			MEAN_ELEMENT_THEORY AS propagator_model,
+			EPOCH AS element_epoch_utc,
+			MEAN_MOTION AS mean_motion_rev_per_day,
+			ECCENTRICITY AS eccentricity,
+			INCLINATION AS inclination_deg,
+			RA_OF_ASC_NODE AS raan_deg,
+			ARG_OF_PERICENTER AS arg_perigee_deg,
+			MEAN_ANOMALY AS mean_anomaly_deg,
+			EPHEMERIS_TYPE AS ephemeris_type_code,
+			CLASSIFICATION_TYPE AS classification_code,
+			NORAD_CAT_ID AS norad_cat_id,
+			ELEMENT_SET_NO AS element_set_number,
+			REV_AT_EPOCH AS rev_number_at_epoch,
+			BSTAR AS bstar_drag_term,
+			MEAN_MOTION_DOT AS mean_motion_first_derivative,
+			MEAN_MOTION_DDOT AS mean_motion_second_derivative,
+			SEMIMAJOR_AXIS AS semimajor_axis_km,
+			PERIOD AS orbital_period_min,
+			APOAPSIS AS apoapsis_km,
+			PERIAPSIS AS periapsis_km,
+			OBJECT_TYPE AS object_type,
+			RCS_SIZE AS rcs_size_class,
+			COUNTRY_CODE AS owner_code,
+			LAUNCH_DATE AS launch_date,
+			SITE AS launch_site_code,
+			DECAY_DATE AS decay_date,
+			FILE AS source_file_id,
+			GP_ID AS gp_record_id,
+			TLE_LINE0 AS tle_line0_name,
+			TLE_LINE1 AS tle_line1,
+			TLE_LINE2 AS tle_line2
+		FROM gp;
+
+		DROP VIEW IF EXISTS semantic_discos_objects;
+		CREATE VIEW semantic_discos_objects AS
+		SELECT
+			discos_object_id,
+			norad_cat_id,
+			cospar_id AS object_cospar_id,
+			name AS object_name,
+			object_class AS discos_object_class,
+			mission AS mission_type,
+			active AS is_active,
+			pred_decay_date AS predicted_decay_date,
+			mass AS mass_kg,
+			launch_id AS discos_launch_id,
+			launch_epoch AS launch_datetime_utc,
+			launch_cospar_no AS launch_cospar_id,
+			launch_failure AS is_launch_failure,
+			launch_vehicle_name,
+			launch_site_name,
+			updated_at AS discos_updated_at_utc
+		FROM discos_objects;
+
+		DROP VIEW IF EXISTS semantic_discos_object_entities;
+		CREATE VIEW semantic_discos_object_entities AS
+		SELECT
+			discos_object_id,
+			norad_cat_id,
+			role AS relationship_role,
+			entity_id AS discos_entity_id,
+			entity_type AS related_entity_type,
+			entity_name AS related_entity_name
+		FROM discos_object_entities;
+	`);
+}
+
 async function loadCsvIntoTable(
 	db: Database.Database,
 	table: string,
@@ -184,20 +312,11 @@ async function deleteUnusedRows(db: Database.Database) {
 				WHERE gp.norad_cat_id = satcat.norad_cat_id
 				AND gp.decay_date IS NULL
 			)
-			OR current != 'Y'
-			OR comment IS NOT NULL
-			OR comment != ''
 		`);
 
 		db.exec(`
 			DELETE FROM gp
 			WHERE decay_date IS NOT NULL
-			OR NOT EXISTS (
-				SELECT 1 FROM satcat
-				WHERE gp.norad_cat_id = satcat.norad_cat_id
-				AND satcat.current = 'Y'
-				AND (satcat.comment IS NULL OR satcat.comment = '')
-			)
 		`);
 
 		db.exec('COMMIT');
@@ -357,6 +476,7 @@ async function buildNextDatabase(targetPath: string) {
 		await loadCsvIntoTable(db, 'gp', `${process.cwd()}/src/data/gp.csv`, 'replace');
 		await deleteUnusedRows(db);
 		await refreshDiscosData(db);
+		ensureSemanticViews(db);
 		dbLogger.info('next database build completed', {
 			targetPath,
 			durationMs: Date.now() - startedAt
@@ -427,6 +547,12 @@ export async function initializeDatabaseAndSetCache() {
 	try {
 		await ensureSourceCsvs();
 		if (hasPopulatedLiveDatabase()) {
+			const liveDb = new Database(DB_PATH, { fileMustExist: true });
+			try {
+				ensureSemanticViews(liveDb);
+			} finally {
+				liveDb.close();
+			}
 			const sceneData = await getSceneData(DB_PATH);
 			await writeSceneDataArtifacts(sceneData);
 			dbLogger.info('database initialization completed', {

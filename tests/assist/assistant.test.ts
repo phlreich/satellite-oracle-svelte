@@ -69,7 +69,7 @@ describe('runAssist tool loop behavior', () => {
 						name: 'sql_select',
 						callId: 'call_sql_1',
 						args: {
-							sql: 'SELECT NORAD_CAT_ID FROM gp ORDER BY NORAD_CAT_ID LIMIT 12',
+							sql: 'SELECT norad_cat_id FROM semantic_gp ORDER BY norad_cat_id LIMIT 12',
 							preview_rows: 5,
 							sample_rows: 0
 						}
@@ -115,7 +115,7 @@ describe('runAssist tool loop behavior', () => {
 		expect(result.action?.focus?.target).toBe('earth');
 		expect(result.historyMessages?.[0]?.content).toContain('sql_select sql=');
 		expect(result.historyMessages?.[0]?.content).toContain(
-			'SELECT NORAD_CAT_ID FROM gp ORDER BY NORAD_CAT_ID LIMIT 12'
+			'SELECT norad_cat_id FROM semantic_gp ORDER BY norad_cat_id LIMIT 12'
 		);
 		expect(createMock).toHaveBeenCalledTimes(3);
 	});
@@ -131,7 +131,7 @@ describe('runAssist tool loop behavior', () => {
 						name: 'sql_select',
 						callId: 'call_sql_1',
 						args: {
-							sql: 'SELECT NORAD_CAT_ID FROM gp ORDER BY NORAD_CAT_ID LIMIT 8',
+							sql: 'SELECT norad_cat_id FROM semantic_gp ORDER BY norad_cat_id LIMIT 8',
 							preview_rows: 5,
 							sample_rows: 0
 						}
@@ -208,7 +208,147 @@ describe('runAssist tool loop behavior', () => {
 		expect(result.action?.orbits?.mode).toBe('replace');
 		expect(result.action?.orbits?.returnedCount).toBe(400);
 		expect(result.action?.orbits?.noradCatIds).toHaveLength(400);
+		expect(createMock).toHaveBeenCalledTimes(1);
+	});
+
+	it('supports one-hop fast path with set_visibility_sql', async () => {
+		createMock.mockResolvedValueOnce({
+			id: 'resp_1',
+			output: [
+				{
+					type: 'function_call',
+						name: 'set_visibility_sql',
+						call_id: 'call_fast_1',
+						arguments: JSON.stringify({
+							sql: "SELECT norad_cat_id FROM semantic_satcat WHERE object_type LIKE '%DEBRIS%' LIMIT 5",
+							mode: 'replace',
+							set_orbits_mode: 'replace',
+							focus_target: 'earth'
+					})
+				}
+			],
+			output_text: 'Showing five debris objects with orbits.'
+		});
+
+		const result = await runAssist({
+			messages: [{ role: 'user', content: 'show debris' }]
+		});
+
+		expect(result.assistantMessage).toContain('debris');
+		expect(result.action?.visibility?.mode).toBe('replace');
+		expect(result.action?.visibility?.returnedCount).toBe(5);
+		expect(result.action?.orbits?.mode).toBe('replace');
+		expect(result.action?.orbits?.returnedCount).toBe(5);
+		expect(result.action?.focus?.target).toBe('earth');
+		expect(createMock).toHaveBeenCalledTimes(1);
+	});
+
+	it('uses set_visibility_sql assistant_message without a followup call', async () => {
+		createMock.mockResolvedValueOnce({
+			id: 'resp_1',
+			output: [
+				{
+					type: 'function_call',
+						name: 'set_visibility_sql',
+						call_id: 'call_fast_2',
+						arguments: JSON.stringify({
+							sql: "SELECT norad_cat_id FROM semantic_satcat WHERE object_type LIKE '%DEBRIS%' LIMIT 3",
+							mode: 'replace',
+							id_column: 'norad_cat_id',
+							assistant_message: 'Debris applied from tool message.'
+						})
+				}
+			],
+			output_text: ''
+		});
+
+		const result = await runAssist({
+			messages: [{ role: 'user', content: 'show debris' }]
+		});
+
+		expect(result.assistantMessage).toBe('Debris applied from tool message.');
+		expect(result.action?.visibility?.returnedCount).toBe(3);
+		expect(createMock).toHaveBeenCalledTimes(1);
+	});
+
+	it('still follows up after sql_select even when text is present', async () => {
+		createMock
+			.mockResolvedValueOnce({
+				id: 'resp_1',
+				output: [
+					{
+						type: 'function_call',
+						name: 'sql_select',
+						call_id: 'call_sql_1',
+						arguments: JSON.stringify({
+							sql: 'SELECT norad_cat_id FROM semantic_gp ORDER BY norad_cat_id LIMIT 3'
+						})
+					}
+				],
+				output_text: 'I am checking that now.'
+			})
+			.mockResolvedValueOnce({
+				id: 'resp_2',
+				output: [],
+				output_text: 'Done.'
+			});
+
+		const result = await runAssist({
+			messages: [{ role: 'user', content: 'check a few ids' }]
+		});
+
+		expect(result.assistantMessage).toContain('Done');
 		expect(createMock).toHaveBeenCalledTimes(2);
+	});
+
+	it('removes sql_select from the final model round and forces an action', async () => {
+		let requestCount = 0;
+		createMock.mockImplementation(async (request: unknown) => {
+			const typed = request as { tools?: Array<{ name: string }> };
+			const toolNames = (typed.tools ?? []).map((tool) => tool.name);
+			if (requestCount === 0) {
+				requestCount += 1;
+				expect(toolNames).toContain('sql_select');
+				return functionCallResponse('resp_1', [
+					{
+						name: 'sql_select',
+						callId: 'call_sql_1',
+						args: { sql: 'SELECT norad_cat_id FROM semantic_gp ORDER BY norad_cat_id LIMIT 2' }
+					}
+				]);
+			}
+			if (requestCount === 1) {
+				requestCount += 1;
+				expect(toolNames).toContain('sql_select');
+				return functionCallResponse('resp_2', [
+					{
+						name: 'sql_select',
+						callId: 'call_sql_2',
+						args: { sql: 'SELECT norad_cat_id FROM semantic_gp ORDER BY norad_cat_id LIMIT 1' }
+					}
+				]);
+			}
+			if (requestCount === 2) {
+				requestCount += 1;
+				expect(toolNames).not.toContain('sql_select');
+				return functionCallResponse('resp_3', [
+					{
+						name: 'set_visibility',
+						callId: 'call_visibility_1',
+						args: { mode: 'replace', norad_ids: [25544, 20580] }
+					}
+				]);
+			}
+			throw new Error('unexpected create call');
+		});
+
+		const result = await runAssist({
+			messages: [{ role: 'user', content: 'analyze then act' }]
+		});
+
+		expect(result.action?.visibility?.mode).toBe('replace');
+		expect(result.action?.visibility?.returnedCount).toBe(2);
+		expect(createMock).toHaveBeenCalledTimes(3);
 	});
 
 	it('rejects non-SELECT SQL tool calls and leaves scene unchanged', async () => {

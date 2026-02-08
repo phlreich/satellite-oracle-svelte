@@ -467,10 +467,12 @@
 					'Content-Type': 'application/json'
 				},
 				body: JSON.stringify({
-					messages: history.map((message) => ({
-						role: message.role,
-						content: message.content
-					})),
+					messages: history
+						.filter((message) => message.kind !== 'tool')
+						.map((message) => ({
+							role: message.role,
+							content: message.content
+						})),
 					sceneContext: {
 						selectedNoradId: $selectedSatellite?.noradCatId ?? null,
 						visibleCount: getVisibleCount(),
@@ -557,18 +559,9 @@
 			}
 		}
 
-		const toolHistoryMessages =
-			result.historyMessages
-				?.filter((message) => message.role === 'assistant' || message.role === 'user')
-				.map((message) => ({
-					role: message.role,
-					content: message.content,
-					kind: 'tool' as const
-				})) ?? [];
 		chatHistory.update((history) => {
 			return [
 				...history,
-				...toolHistoryMessages,
 				{ role: 'assistant', content: assistantMessage, kind: 'chat' }
 			];
 		});

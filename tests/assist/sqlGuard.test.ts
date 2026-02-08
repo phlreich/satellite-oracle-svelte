@@ -7,7 +7,7 @@ const DB_PATH = path.join(process.cwd(), 'src/data/satellite.db');
 describe('guardReadOnlySql', () => {
 	it('accepts read-only queries, including CTEs and string literals with SQL keywords', () => {
 		const cte = guardReadOnlySql(
-			'WITH ranked AS (SELECT NORAD_CAT_ID FROM gp LIMIT 5) SELECT * FROM ranked',
+			'WITH ranked AS (SELECT 1 AS norad_cat_id) SELECT * FROM ranked',
 			DB_PATH
 		);
 		const keywordLiteral = guardReadOnlySql("SELECT 'drop table gp' AS note", DB_PATH);
@@ -30,5 +30,14 @@ describe('guardReadOnlySql', () => {
 
 		expect(blockedFunction.ok).toBe(false);
 		expect(multi.ok).toBe(false);
+	});
+
+	it('rejects direct reads from raw tables and allows semantic views', () => {
+		const rawTable = guardReadOnlySql('SELECT NORAD_CAT_ID FROM gp LIMIT 1', DB_PATH);
+		const semanticView = guardReadOnlySql('SELECT norad_cat_id FROM semantic_gp LIMIT 1', DB_PATH);
+
+		expect(rawTable.ok).toBe(false);
+		expect(rawTable.ok ? '' : rawTable.error).toContain('Only semantic_* views');
+		expect(semanticView.ok).toBe(true);
 	});
 });

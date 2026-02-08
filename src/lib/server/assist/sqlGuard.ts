@@ -2,6 +2,7 @@ import { DatabaseSync, constants } from 'node:sqlite';
 import { pathToFileURL } from 'node:url';
 
 const MAX_SQL_LENGTH = 20_000;
+const SEMANTIC_VIEW_PREFIX = 'semantic_';
 
 const ALLOWED_ACTION_CODES = new Set<number>([
 	constants.SQLITE_SELECT,
@@ -77,15 +78,29 @@ export function guardReadOnlySql(rawSql: unknown, dbPath: string): SqlGuardResul
 
 	let deniedAction: number | null = null;
 	let deniedFunction: string | null = null;
+	let deniedReadTable: string | null = null;
 	const db = new DatabaseSync(toReadonlyUri(dbPath));
 
 	try {
-		db.setAuthorizer((actionCode, _arg1, arg2) => {
+		db.setAuthorizer((actionCode, arg1, arg2, _dbName, triggerOrView) => {
 			if (actionCode === constants.SQLITE_FUNCTION) {
 				const functionName = typeof arg2 === 'string' ? arg2.toLowerCase() : '';
 				if (functionName && BLOCKED_FUNCTIONS.has(functionName)) {
 					deniedAction = actionCode;
 					deniedFunction = functionName;
+					return constants.SQLITE_DENY;
+				}
+			}
+
+			if (actionCode === constants.SQLITE_READ) {
+				const tableName = typeof arg1 === 'string' ? arg1 : '';
+				const viaView = typeof triggerOrView === 'string' ? triggerOrView : '';
+				const isSemanticRead =
+					tableName.startsWith(SEMANTIC_VIEW_PREFIX) || viaView.startsWith(SEMANTIC_VIEW_PREFIX);
+				const isInternalRead = tableName.startsWith('sqlite_');
+				if (!isSemanticRead && !isInternalRead) {
+					deniedAction = actionCode;
+					deniedReadTable = tableName || null;
 					return constants.SQLITE_DENY;
 				}
 			}
@@ -113,6 +128,12 @@ export function guardReadOnlySql(rawSql: unknown, dbPath: string): SqlGuardResul
 			return {
 				ok: false,
 				error: `SQL function '${deniedFunction}' is not allowed in sql_select.`
+			};
+		}
+		if (deniedReadTable) {
+			return {
+				ok: false,
+				error: `Only semantic_* views are allowed in assistant SQL. Blocked direct read from '${deniedReadTable}'.`
 			};
 		}
 		if (deniedAction !== null) {
