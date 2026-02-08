@@ -1,6 +1,6 @@
 # Dev Runbook
 
-Last Updated: 2026-02-07
+Last Updated: 2026-02-08
 
 ## Bearings in 60 Seconds
 1. `git rev-parse --short HEAD` and `git status --short` to ground repo state.
@@ -20,6 +20,7 @@ Last Updated: 2026-02-07
 - Vite dev sends an internal `/health` warmup request so startup DB initialization begins before first browser visit.
 - `npm run dev` writes runtime logs to `logs/dev-YYYYMMDD-HHMMSS.log` and streams the same output to terminal.
 - `npm run dev` skips full DB rebuild/DISCOS API refresh when live SQLite tables are already populated.
+- Semantic assist views are (re)created on startup even when rebuild is skipped.
 - To force a full rebuild in dev, clear or replace `src/data/satellite.db` before startup.
 
 ## Assist Debug Loop
@@ -28,6 +29,10 @@ Last Updated: 2026-02-07
 3. Open the latest dev log and locate the request by `requestId`.
 4. Open `logs/assist/<timestamp>-<requestId>.md` for the compact readable timeline.
 5. Use dev log entries ending in `full` for raw OpenAI/tool payload fidelity.
+
+## Test Guardrails
+- Vitest setup file `tests/setup/no-network.ts` throws on any unmocked `fetch` call.
+- Tests that need network behavior must explicitly mock `fetch`.
 
 ## UI Quick Checks
 - Pending assist shows one animated thinking line with a blinking cursor.
@@ -46,9 +51,10 @@ Last Updated: 2026-02-07
 ## Assist Hard Limits
 - API rejects `/api/assist` payloads over `50_000` bytes by `content-length`.
 - API rejects assist bodies with more than `40` chat messages.
-- Runtime trims forwarded chat history to the last `30` messages.
-- Runtime allows up to `8` tool rounds per request.
-- `sql_select` stops after `5000` rows and marks `truncated=true`.
+- Runtime trims forwarded chat history to the last `18` messages.
+- Runtime allows up to `3` tool rounds per request.
+- `sql_select` analysis budget is `2` calls per request, then only action tools are exposed.
+- `sql_select` has no hard row cap and may return full result sets.
 
 ## Quick Log Queries
 - Latest dev log: `ls -1t logs/dev-*.log | head -n 1`

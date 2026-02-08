@@ -1,24 +1,22 @@
 # Current Truth
 
-Last Updated: 2026-02-07
+Last Updated: 2026-02-08
 Repo: `/home/phlreich/satellite-oracle-svelte`
-Head Commit: `9bf52a0`
-
+Head Commit: `951c4cd`
 
 ## What Works Now
-- `/api/assist` runs a direct Responses API tool loop with no planner/executor split.
-- Scene visibility updates that hide the selected satellite now clear selection and orbit tracking together.
-- Oracle chat now shows a typewriter-style thinking indicator while assist requests are pending.
-- Thinking animation now stops gracefully at typing/erasing boundaries when a response arrives.
-- Dev runtime still writes timestamped logs plus compact assist traces with optional full payload logging.
+- `/api/assist` runs a direct Responses API tool loop with round-aware tool gating and a 3-round max.
+- Fast path `set_visibility_sql` can apply visibility, orbits, focus, and assistant text in a single model call.
+- Assistant SQL is restricted to `semantic_*` views via SQLite authorizer checks.
+- Semantic views are created during DB build and on startup reuse so assist schema naming stays stable.
+- Tests block unmocked network calls by default through global `fetch` stubbing in Vitest setup.
 
 ## Current Limits
-- Full dev logs can be very large and include sensitive prompt/message/tool data.
-- Multi-round tool loops can still be slow when the model keeps probing with extra SQL queries.
-- Large visibility updates still push large NORAD ID arrays to the client and UI.
-- Chat is hidden on mobile user agents (`isMobileView`) in the current Oracle page.
-- Full DISCOS refresh is still a complete reload and can take a long time.
-- SQL query results are still held in-process per request round (capped at 5000 rows).
+- End-to-end assist latency is still usually dominated by upstream model response time.
+- `sql_select` result sets are no longer row-capped, so large queries can increase memory and followup payload size.
+- The model can still pick weak SQL logic for ambiguous prompts (for example over-broad country predicates).
+- Large visibility/orbit updates still send large NORAD ID arrays to the client.
+- Chat UI is still hidden on mobile user agents (`isMobileView`).
 
 ## Next High-Value Move
-- Add log retention/rotation for `logs/dev-*` and `logs/assist/*` to keep disk usage predictable.
+- Add log retention and rotation for `logs/dev-*` and `logs/assist/*`.

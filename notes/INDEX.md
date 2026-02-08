@@ -1,6 +1,6 @@
 # Satellite Oracle Svelte KB
 
-Last Updated: 2026-02-07
+Last Updated: 2026-02-08
 Repo: `/home/phlreich/satellite-oracle-svelte`
 
 ## Start Here
@@ -8,13 +8,14 @@ Repo: `/home/phlreich/satellite-oracle-svelte`
 - `07-notes-maintenance-protocol.md`
 
 ## Status Snapshot
-- Branch head is `9bf52a0`.
-- `/api/assist` uses a direct multi-tool Responses loop.
-- Runtime supports SQL analysis + scene visibility updates + scene focus updates in one turn.
-- Dev logs now capture full assist payloads while `logs/assist/*.md` keeps readable compact traces.
-- Refresh now uses build-and-swap DB rotation (`satellite.next.db` -> `satellite.db`).
+- Branch head is `951c4cd`.
+- `/api/assist` uses a direct Responses loop with round-aware tool exposure.
+- Fast path `set_visibility_sql` can apply visibility/orbits/focus plus assistant text in one call.
+- Assistant SQL is restricted to `semantic_*` views.
+- Runtime no longer hard-caps `sql_select` rows.
+- Dev logs capture full payloads while `logs/assist/*.md` keeps compact readable traces.
+- Refresh uses build-and-swap DB rotation (`satellite.next.db` -> `satellite.db`).
 - Dev startup skips rebuild/API refresh when live DB tables are already populated.
-- Oracle UI now uses monochrome industrial styling with a typed thinking-status indicator during pending assist.
 
 ## Fast Bearings
 1. `git rev-parse --short HEAD` and `git status --short`.
@@ -29,6 +30,7 @@ Repo: `/home/phlreich/satellite-oracle-svelte`
 - Risks: `04-known-issues.md`
 - History: `05-change-log.md`
 - Visual design: `09-design.md`
+- Manual query checks: `10-test-queries.md`
 
 ## Commit Gate
 Follow `07-notes-maintenance-protocol.md`.

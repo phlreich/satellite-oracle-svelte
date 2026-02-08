@@ -1,21 +1,29 @@
 # Change Log
 
-Last Updated: 2026-02-07
+Last Updated: 2026-02-08
+
+## 2026-02-08
+- `951c4cd` Add `set_visibility_sql` fast path, round-aware tool gating, and one-hop action completion for obvious requests.
+- `951c4cd` Restrict assistant SQL to `semantic_*` views via authorizer checks and add semantic view creation in DB init/build.
+- `951c4cd` Remove `sql_select` hard row cap and tighten default loop budgets (`MAX_TOOL_ROUNDS=3`, SQL analysis budget `2`).
+- `951c4cd` Filter hidden tool-history messages from outbound chat payloads to reduce prompt bloat.
+- `951c4cd` Add Vitest global no-network guard (`tests/setup/no-network.ts`) and align assist/sql guard tests with semantic views.
+- `951c4cd` Add manual query corpus in `notes/10-test-queries.md` for complex DISCOS-driven prompts.
 
 ## 2026-02-07
 - `9bf52a0` Add typewriter thinking indicator with shuffled status phrases, graceful stop, and shared loader/chat cursor cadence.
-- `66de02e` Restyle app and oracle UI to a stripped monochrome industrial look; simplify loading screen.
+- `66de02e` Restyle app and oracle UI to a stripped monochrome industrial look and simplify loading screen.
 - Fix scene visibility updates so hiding the selected satellite also removes its orbit track.
 - `97cb9d6` Add repository notes baseline (`notes/`) with current-truth, runbook, risks, and maintenance protocol.
-- `6234a6a` Add dual observability mode: full-fidelity dev logging for OpenAI/tool payloads and compact human-readable assist trace markdown output.
+- `6234a6a` Add dual observability mode with full-fidelity dev logging and compact human-readable assist traces.
 - `56069e7` Make assistant focus robust in UI by auto-adding hidden target NORAD IDs before retrying focus and surfacing failures.
-- `1f8b028` Replace regex SQL screening with SQLite authorizer-based read-only guard, add single-statement tail checks, and cap `sql_select` results.
+- `1f8b028` Replace regex SQL screening with SQLite authorizer-based read-only guard and single-statement tail checks.
 - `a1157d5` Skip full startup rebuild in dev when DB is already populated and add database swap smoke test.
-- `33c7870` Refactor refresh pipeline to build `satellite.next.db` and atomically swap into `satellite.db`; assistant now opens DB per request.
+- `33c7870` Refactor refresh pipeline to build `satellite.next.db` and atomically swap into `satellite.db`.
 
 ## 2026-02-06
-- `88dd99f` Fix DISCOS sparse fieldsets to include requested relationships (`launch`, `operators`, `states`) and prevent startup `include:conflict` 400s.
-- `f09505a` Add DISCOS nightly enrichment baseline (new tables, ingest module, refresh wiring, and tests).
+- `88dd99f` Fix DISCOS sparse fieldsets to include requested relationships and prevent startup `include:conflict` 400s.
+- `f09505a` Add DISCOS nightly enrichment baseline (tables, ingest module, refresh wiring, and tests).
 - `12749b1` Move DISCOSweb v2 OpenAPI spec to `docs/discosweb/openapi-v2.yml`.
 - `03a1b33` Add full assist trace logging for requests, tools, and SQL.
 - `d30b495` Replace planner stack with direct assist tool loop.

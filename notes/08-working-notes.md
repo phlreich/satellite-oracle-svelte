@@ -1,6 +1,6 @@
 # Working Notes
 
-Last Updated: 2026-02-07
+Last Updated: 2026-02-08
 
 - `node:sqlite` `DatabaseSync#prepare` only compiles the first statement; check `statement.sourceSQL` tail to reject extra statements in one tool call.
 - SQLite authorizer action codes provide a robust read-only guard (`SELECT/READ/FUNCTION/RECURSIVE` allow-list) without regex SQL scanning.
@@ -22,3 +22,23 @@ Last Updated: 2026-02-07
 - Orbit webs can piggyback on the existing orbit worker by tagging requests as `focus` vs `overlay`; the scene can then track one live focused orbit and many static overlay orbits in parallel.
 - Per-orbit draw calls are the FPS bottleneck for constellation-scale overlays; batching overlay segments into one `THREE.LineSegments` mesh keeps FPS higher without capping orbit count.
 - To preserve query continuity across turns without persisting NORAD arrays, return a compact `[tool-history]` assistant message (with SQL text) and append it as hidden chat history that is still forwarded to `/api/assist`.
+- `deleteUnusedRows()` leaves `gp`/`satcat` at 31,913 rows (from 66,199/67,593 CSV rows), while `discos_objects` stays much larger at 89,099 rows (67,599 with NORAD + 21,500 without), so cross-source count mismatch is expected.
+- CSV diff check: `gp.csv` has 33,051 no-decay rows but prune keeps 31,913, dropping 1,138 non-decayed objects (1,051 are `TBA - TO BE ASSIGNED` with no `satcat` row; 87 have non-empty `satcat.comment`, mostly deep-space/no-elements markers).
+- Of those 1,138 dropped non-decayed GP rows, only 110 map to `discos_objects.norad_cat_id` (~9.7%): 85/87 comment-filtered rows are in DISCOS, but only 25/1,051 missing-`satcat` (TBA-heavy) rows are.
+- Relaxing `deleteUnusedRows()` to only remove decayed GP rows (`gp.decay_date IS NOT NULL`) keeps 1,138 extra non-decayed GP objects from CSV input (expected `gp` post-prune count rises from 31,913 to 33,051).
+- `sql_select` no longer hard-caps result rows at 5,000; tool results now include full SELECT result sets (preview/sample are still limited separately).
+- In DISCOS operator names, OneWeb appears as `One Web` (space), so `entity_name LIKE '%OneWeb%'` can return zero and cause the model to broaden filters incorrectly; adding `active = 1` changes the strict OneWeb Soyuz subset from 386 to 384.
+- A simple fast-path tool (`set_visibility_sql`) plus short tool-usage instructions gives low-latency behavior without adding planner layers; filtering out hidden tool-history from outbound chat context also cuts avoidable prompt bloat.
+- Add a global Vitest setup that stubs `fetch` to throw by default so accidental external API calls fail fast unless a test explicitly mocks `fetch`.
+- In the latest `show debris` run, total assist latency was 18.6s but local `set_visibility_sql` execution was only 29ms; almost all delay was upstream OpenAI response time (15.9s initial + 2.6s followup), so this was model/queue latency rather than DB/query work.
+- Switched runtime default model fallback from `gpt-5-mini` to `gpt-5-nano` (`OPENAI_ASSIST_MODEL` still overrides), and aligned the assistant unit-test env mock to nano.
+- First `gpt-5-nano` `show debris` interaction regressed badly: it mapped debris to `discos_objects.object_class` (`'DEBRIS'`/`'%DEBRIS%'`) instead of `satcat.OBJECT_TYPE`, converged to one `Rocket Debris` row (`61768`), and consumed all 3 tool rounds (4 model calls, ~32.8s total).
+- Reverted runtime fallback and assistant-test mock back to `gpt-5-mini` after nano showed worse latency+accuracy on the core `show debris` path.
+- Fast-path now supports one-model-call completion even without model `output_text`: `set_visibility_sql` can carry `assistant_message`, and round-0 fast action calls short-circuit followup generation.
+- Round-aware tool gating prevents analysis-loop dead-ends: allow `sql_select` only before the last model round, then expose action tools only and stop after executing that final tool round instead of sending another followup call.
+- `satcat.SITE` and `gp.SITE` are launch site codes (for example `TTMTR`, `VOSTO`, `AFETR`), while human-readable site names live in `discos_objects.launch_site_name`; prompts that only list column names often cause the model to confuse these fields.
+- A semantic view layer (`semantic_gp`, `semantic_satcat`, `semantic_boxscore`, `semantic_discos_objects`, `semantic_discos_object_entities`) makes clearer column names available without migrating raw tables and lets assist context steer SQL toward human-readable fields like `launch_site_name`.
+- SQLite authorizer can distinguish direct table reads from view-expansion reads (`triggerOrView`), so assistant SQL can be restricted to `semantic_*` while still allowing underlying raw-table access when routed through semantic views.
+- For the current local DB snapshot, `show all german debris` legitimately returns zero: `semantic_satcat.object_type LIKE '%DEBRIS%'` has no rows tied to `Germany` in `semantic_discos_object_entities`; the bad-looking run came from a noisy first probe (`related_entity_type LIKE '%COUNTRY%'`) before converging to an empty final filter.
+- Germany-linked debris does exist in DISCOS (`Rocket Debris` NORAD `38844`, `Payload Debris` NORAD `44597`), but those NORAD IDs are absent from `satcat` and have no `gp` rows; SATCAT/GP-backed “visible in orbit now” filters therefore return zero German debris.
+- NORAD `38844` and `44597` are present in raw `gp.csv`/`satcat.csv` but with past `DECAY_DATE` (`2014-04-06`, `2020-05-26`); current `deleteUnusedRows()` deletes SATCAT rows lacking a non-decayed GP row, then deletes all GP rows with non-null `decay_date`, so both IDs are pruned intentionally.
