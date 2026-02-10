@@ -58,7 +58,7 @@ The green accent is functional — the only way to distinguish "selected" from "
 Typewriter animation during assistant requests. Phrases drawn from a shuffled deck of 19 entries across two registers:
 
 - 14 active (system doing something): QUERYING CATALOG, SCANNING TELEMETRY, PARSING EPHEMERIS, CORRELATING TRACKS, INTERROGATING DATABASE, PROPAGATING ORBITS, CONSULTING THE ORACLE, CROSS-REFERENCING OBJECTS, RESOLVING ELEMENTS, REDUCING OBSERVATIONS, VALIDATING EPOCHS, REBUILDING CONTEXT, INDEXING DISTANCE, CENSORING MANIFOLD.
-- 5 atmospheric (passive/ambiguous): AWAITING DOWNLINK, ACQUIRING SIGNAL, STILL LOOKING, REMEMBERING, SECOND PASS.
+- 5 atmospheric (passive/ambiguous): AWAITING DOWNLINK, ACQUIRING SIGNAL, STILL LOOKING, REMEMBERING.
 
 Atmospheric phrases are guaranteed at least one active phrase between them. Full deck cycles before reshuffling. Style: `0.78em`, uppercase, `0.12em` letter-spacing, `rgba(255,255,255,0.5)`. Reads as system status, not conversation.
 
