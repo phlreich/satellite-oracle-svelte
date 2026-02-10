@@ -1,6 +1,6 @@
 # Known Issues and Risks
 
-Last Updated: 2026-02-08
+Last Updated: 2026-02-10
 
 - WSL screenshot automation can be misleading; trust manual browser checks.
 - Chat UI is hidden on mobile user agents (`isMobileView`), so mobile users currently lose assistant controls.
@@ -20,3 +20,4 @@ Last Updated: 2026-02-08
 - Startup initialization failures are logged but not process-fatal, so degraded behavior can surface later at request time.
 - Root and `/oracle` route duplication adds avoidable complexity.
 - Visibility updates that hide the selected satellite clear selection and orbit immediately, which can feel abrupt in the panel.
+- Motion smoothing renders at a fixed delay (`~225ms`) to improve continuity, so displayed positions intentionally lag freshest propagated state.

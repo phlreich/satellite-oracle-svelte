@@ -1,8 +1,18 @@
 # Change Log
 
-Last Updated: 2026-02-08
+Last Updated: 2026-02-10
+
+## 2026-02-10
+
+- `58032a9` Refresh and expand repository notes baseline.
+- Sync notes to current head (`58032a9`) and fix dev route bearings (`/oracle` in dev vs `/satellite-oracle/oracle` in production).
+- Record that backend `historyMessages` `[tool-history]` output is currently not appended by Oracle UI.
+- Replace single-sample render extrapolation with delayed two-sample Hermite interpolation (`previous` + `current`) for smoother satellite motion.
+- Rotate worker traversal start offsets each loop to remove stable “early index gets fresher updates” bias.
+- Extend motion debug overlay with interpolation-health metrics (`interp`, `extrap`, `hold`, `current`, `missing`, `clamped`) and support `?debugMotion` in production.
 
 ## 2026-02-08
+
 - `951c4cd` Add `set_visibility_sql` fast path, round-aware tool gating, and one-hop action completion for obvious requests.
 - `951c4cd` Restrict assistant SQL to `semantic_*` views via authorizer checks and add semantic view creation in DB init/build.
 - `951c4cd` Remove `sql_select` hard row cap and tighten default loop budgets (`MAX_TOOL_ROUNDS=3`, SQL analysis budget `2`).
@@ -11,6 +21,7 @@ Last Updated: 2026-02-08
 - `951c4cd` Add manual query corpus in `notes/10-test-queries.md` for complex DISCOS-driven prompts.
 
 ## 2026-02-07
+
 - `9bf52a0` Add typewriter thinking indicator with shuffled status phrases, graceful stop, and shared loader/chat cursor cadence.
 - `66de02e` Restyle app and oracle UI to a stripped monochrome industrial look and simplify loading screen.
 - Fix scene visibility updates so hiding the selected satellite also removes its orbit track.
@@ -22,6 +33,7 @@ Last Updated: 2026-02-08
 - `33c7870` Refactor refresh pipeline to build `satellite.next.db` and atomically swap into `satellite.db`.
 
 ## 2026-02-06
+
 - `88dd99f` Fix DISCOS sparse fieldsets to include requested relationships and prevent startup `include:conflict` 400s.
 - `f09505a` Add DISCOS nightly enrichment baseline (tables, ingest module, refresh wiring, and tests).
 - `12749b1` Move DISCOSweb v2 OpenAPI spec to `docs/discosweb/openapi-v2.yml`.

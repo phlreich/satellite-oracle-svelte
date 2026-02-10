@@ -18,6 +18,28 @@ type OrbitWorkerResponse = {
 	satelliteIndex: number;
 	points: OrbitWorkerPoint[];
 };
+type WorkerLoopStatsMessage = {
+	type: 'loop-stats';
+	workerId: number;
+	assignedCount: number;
+	updatedCount: number;
+	loopMs: number;
+	finishedAtMs: number;
+};
+type WorkerLoopSnapshot = {
+	assignedCount: number;
+	updatedCount: number;
+	loopMs: number;
+	finishedAtMs: number;
+};
+type InterpolationHealthSnapshot = {
+	interpolating: number;
+	holdingPrevious: number;
+	currentSample: number;
+	extrapolating: number;
+	clamped: number;
+	missingCurrent: number;
+};
 type SelectedSatelliteState = {
 	name: string;
 	details: object | string;
@@ -208,15 +230,27 @@ export const createScene = async (
 
 	// initialize satellite positions
 	const N = satellites.length;
-	const sharedBufferTargetPositions = new SharedArrayBuffer(N * 3 * Float32Array.BYTES_PER_ELEMENT);
-	const sharedBufferTargetVelocities = new SharedArrayBuffer(
+	const sharedBufferPreviousPositions = new SharedArrayBuffer(
 		N * 3 * Float32Array.BYTES_PER_ELEMENT
 	);
-	const sharedBufferUpdateTimes = new SharedArrayBuffer(N * Float64Array.BYTES_PER_ELEMENT);
+	const sharedBufferPreviousVelocities = new SharedArrayBuffer(
+		N * 3 * Float32Array.BYTES_PER_ELEMENT
+	);
+	const sharedBufferPreviousUpdateTimes = new SharedArrayBuffer(N * Float64Array.BYTES_PER_ELEMENT);
+	const sharedBufferCurrentPositions = new SharedArrayBuffer(
+		N * 3 * Float32Array.BYTES_PER_ELEMENT
+	);
+	const sharedBufferCurrentVelocities = new SharedArrayBuffer(
+		N * 3 * Float32Array.BYTES_PER_ELEMENT
+	);
+	const sharedBufferCurrentUpdateTimes = new SharedArrayBuffer(N * Float64Array.BYTES_PER_ELEMENT);
 	const sharedBuffervisibility = new SharedArrayBuffer(N * 1 * Uint8Array.BYTES_PER_ELEMENT);
-	const satelliteTargetPositions = new Float32Array(sharedBufferTargetPositions);
-	const satelliteTargetVelocities = new Float32Array(sharedBufferTargetVelocities);
-	const satelliteUpdateTimes = new Float64Array(sharedBufferUpdateTimes);
+	const satellitePreviousPositions = new Float32Array(sharedBufferPreviousPositions);
+	const satellitePreviousVelocities = new Float32Array(sharedBufferPreviousVelocities);
+	const satellitePreviousUpdateTimes = new Float64Array(sharedBufferPreviousUpdateTimes);
+	const satelliteCurrentPositions = new Float32Array(sharedBufferCurrentPositions);
+	const satelliteCurrentVelocities = new Float32Array(sharedBufferCurrentVelocities);
+	const satelliteCurrentUpdateTimes = new Float64Array(sharedBufferCurrentUpdateTimes);
 	const satelliteRenderPositions = new Float32Array(N * 3);
 	let activeVisibleIndices: number[] = [];
 	const visibility = new Uint8Array(sharedBuffervisibility);
@@ -244,6 +278,8 @@ export const createScene = async (
 		satelliteIndexByNoradId.set(satelliteData[i].norad_cat_id, i);
 	}
 	const workerUpdateIntervalMs = 250;
+	const motionSmoothingDelayMs = Math.max(120, Math.round(workerUpdateIntervalMs * 0.9));
+	const maxExtrapolationSeconds = (workerUpdateIntervalMs * 2) / 1000;
 	const workerCount = Math.max(
 		1,
 		Math.min(4, Math.floor((navigator.hardwareConcurrency ?? 4) / 2) || 1)
@@ -251,6 +287,121 @@ export const createScene = async (
 	const satelliteWorkers = Array.from({ length: workerCount }, () => {
 		return new Worker(new URL('./satelliteWorker.js', import.meta.url), { type: 'module' });
 	});
+	const showMotionDebugOverlay =
+		import.meta.env.DEV || new URLSearchParams(window.location.search).has('debugMotion');
+	const overlayUpdateIntervalMs = 180;
+	const workerStatsFreshMs = 2200;
+	let motionDebugOverlay: HTMLPreElement | undefined;
+	let lastOverlayUpdateMs = 0;
+	const workerLoopStats = new Map<number, WorkerLoopSnapshot>();
+	let interpolationHealth: InterpolationHealthSnapshot = {
+		interpolating: 0,
+		holdingPrevious: 0,
+		currentSample: 0,
+		extrapolating: 0,
+		clamped: 0,
+		missingCurrent: 0
+	};
+
+	function createMotionDebugOverlay() {
+		if (!showMotionDebugOverlay || motionDebugOverlay) {
+			return;
+		}
+		const overlay = document.createElement('pre');
+		overlay.style.position = 'fixed';
+		overlay.style.top = '48px';
+		overlay.style.right = '8px';
+		overlay.style.zIndex = '100001';
+		overlay.style.margin = '0';
+		overlay.style.padding = '8px 10px';
+		overlay.style.pointerEvents = 'none';
+		overlay.style.whiteSpace = 'pre';
+		overlay.style.fontFamily = "Consolas, 'Courier New', 'Liberation Mono', monospace";
+		overlay.style.fontSize = '11px';
+		overlay.style.lineHeight = '1.35';
+		overlay.style.letterSpacing = '0.04em';
+		overlay.style.color = '#9de3ff';
+		overlay.style.background = 'rgba(0, 0, 0, 0.72)';
+		overlay.style.border = '1px solid rgba(157, 227, 255, 0.5)';
+		overlay.textContent = 'MOTION DEBUG: warming up...';
+		document.body.appendChild(overlay);
+		motionDebugOverlay = overlay;
+	}
+
+	function updateMotionDebugOverlay(nowMs: number) {
+		if (!motionDebugOverlay || nowMs - lastOverlayUpdateMs < overlayUpdateIntervalMs) {
+			return;
+		}
+		lastOverlayUpdateMs = nowMs;
+
+		let readyCount = 0;
+		let staleSumMs = 0;
+		let staleMaxMs = 0;
+		let staleOverTick = 0;
+		let staleOverClamp = 0;
+		for (let i = 0; i < activeVisibleIndices.length; i++) {
+			const updateTimeMs = satelliteCurrentUpdateTimes[activeVisibleIndices[i]];
+			if (updateTimeMs <= 0) {
+				continue;
+			}
+			readyCount += 1;
+			const staleMs = Math.max(0, nowMs - updateTimeMs);
+			staleSumMs += staleMs;
+			if (staleMs > staleMaxMs) {
+				staleMaxMs = staleMs;
+			}
+			if (staleMs > workerUpdateIntervalMs) {
+				staleOverTick += 1;
+			}
+			if (staleMs > workerUpdateIntervalMs * 2) {
+				staleOverClamp += 1;
+			}
+		}
+
+		const freshWorkerStats = [...workerLoopStats.values()].filter(
+			(snapshot) => nowMs - snapshot.finishedAtMs <= workerStatsFreshMs
+		);
+		const workerAssigned = freshWorkerStats.reduce(
+			(sum, snapshot) => sum + snapshot.assignedCount,
+			0
+		);
+		const workerUpdated = freshWorkerStats.reduce(
+			(sum, snapshot) => sum + snapshot.updatedCount,
+			0
+		);
+		const totalLoopMs = freshWorkerStats.reduce((sum, snapshot) => sum + snapshot.loopMs, 0);
+		const maxLoopMs = freshWorkerStats.reduce((max, snapshot) => Math.max(max, snapshot.loopMs), 0);
+		const avgLoopMs = freshWorkerStats.length > 0 ? totalLoopMs / freshWorkerStats.length : 0;
+		const slowLoopCount = freshWorkerStats.filter(
+			(snapshot) => snapshot.loopMs > workerUpdateIntervalMs
+		).length;
+
+		const avgStaleMs = readyCount > 0 ? staleSumMs / readyCount : 0;
+		const visibleCount = activeVisibleIndices.length;
+		const interpolationPct =
+			visibleCount > 0 ? (interpolationHealth.interpolating / visibleCount) * 100 : 0;
+		const extrapolationPct =
+			visibleCount > 0 ? (interpolationHealth.extrapolating / visibleCount) * 100 : 0;
+		motionDebugOverlay.textContent = [
+			'MOTION DEBUG',
+			`visible ${activeVisibleIndices.length}  ready ${readyCount}`,
+			`render delay ${motionSmoothingDelayMs}ms`,
+			`stale avg ${avgStaleMs.toFixed(0)}ms  max ${staleMaxMs.toFixed(0)}ms`,
+			`stale>${workerUpdateIntervalMs}ms ${staleOverTick}  stale>${workerUpdateIntervalMs * 2}ms ${staleOverClamp}`,
+			`interp ${interpolationHealth.interpolating} (${interpolationPct.toFixed(0)}%)  extrap ${interpolationHealth.extrapolating} (${extrapolationPct.toFixed(0)}%)`,
+			`hold ${interpolationHealth.holdingPrevious}  current ${interpolationHealth.currentSample}  missing ${interpolationHealth.missingCurrent}  clamped ${interpolationHealth.clamped}`,
+			`workers ${freshWorkerStats.length}/${workerCount}  assigned ${workerAssigned}  updated ${workerUpdated}`,
+			`loop avg ${avgLoopMs.toFixed(1)}ms  max ${maxLoopMs.toFixed(1)}ms  slow ${slowLoopCount}`
+		].join('\n');
+	}
+
+	function removeMotionDebugOverlay() {
+		if (!motionDebugOverlay) {
+			return;
+		}
+		motionDebugOverlay.remove();
+		motionDebugOverlay = undefined;
+	}
 
 	const orbitWorker = new Worker(new URL('./orbitWorker.js', import.meta.url), { type: 'module' });
 
@@ -552,23 +703,112 @@ export const createScene = async (
 		}
 	};
 
-	const extrapolateFromVelocity = (nowMs: number) => {
-		const maxExtrapolationSeconds = (workerUpdateIntervalMs * 2) / 1000;
+	const hermiteInterpolate = (
+		p0: number,
+		v0: number,
+		p1: number,
+		v1: number,
+		t: number,
+		deltaSeconds: number
+	) => {
+		const t2 = t * t;
+		const t3 = t2 * t;
+		const h00 = 2 * t3 - 3 * t2 + 1;
+		const h10 = t3 - 2 * t2 + t;
+		const h01 = -2 * t3 + 3 * t2;
+		const h11 = t3 - t2;
+		return h00 * p0 + h10 * deltaSeconds * v0 + h01 * p1 + h11 * deltaSeconds * v1;
+	};
+
+	const updateRenderPositionsFromSmoothedTrajectory = (nowMs: number) => {
+		const renderTimeMs = nowMs - motionSmoothingDelayMs;
+		let interpolating = 0;
+		let holdingPrevious = 0;
+		let currentSample = 0;
+		let extrapolating = 0;
+		let clamped = 0;
+		let missingCurrent = 0;
 		for (let i = 0; i < activeVisibleIndices.length; i++) {
-			const index = activeVisibleIndices[i] * 3;
-			const updateTimeMs = satelliteUpdateTimes[activeVisibleIndices[i]];
-			let deltaSeconds = 0;
-			if (updateTimeMs > 0) {
-				deltaSeconds = Math.max(0, (nowMs - updateTimeMs) / 1000);
-				deltaSeconds = Math.min(deltaSeconds, maxExtrapolationSeconds);
+			const satelliteIndex = activeVisibleIndices[i];
+			const vectorIndex = satelliteIndex * 3;
+			const previousTimeMs = satellitePreviousUpdateTimes[satelliteIndex];
+			const currentTimeMs = satelliteCurrentUpdateTimes[satelliteIndex];
+
+			if (currentTimeMs <= 0) {
+				missingCurrent += 1;
+				continue;
 			}
-			satelliteRenderPositions[index] =
-				satelliteTargetPositions[index] + satelliteTargetVelocities[index] * deltaSeconds;
-			satelliteRenderPositions[index + 1] =
-				satelliteTargetPositions[index + 1] + satelliteTargetVelocities[index + 1] * deltaSeconds;
-			satelliteRenderPositions[index + 2] =
-				satelliteTargetPositions[index + 2] + satelliteTargetVelocities[index + 2] * deltaSeconds;
+
+			const hasPair = previousTimeMs > 0 && currentTimeMs > previousTimeMs;
+			if (hasPair && renderTimeMs >= previousTimeMs && renderTimeMs <= currentTimeMs) {
+				interpolating += 1;
+				const spanMs = currentTimeMs - previousTimeMs;
+				const normalizedT = (renderTimeMs - previousTimeMs) / spanMs;
+				const spanSeconds = spanMs / 1000;
+				satelliteRenderPositions[vectorIndex] = hermiteInterpolate(
+					satellitePreviousPositions[vectorIndex],
+					satellitePreviousVelocities[vectorIndex],
+					satelliteCurrentPositions[vectorIndex],
+					satelliteCurrentVelocities[vectorIndex],
+					normalizedT,
+					spanSeconds
+				);
+				satelliteRenderPositions[vectorIndex + 1] = hermiteInterpolate(
+					satellitePreviousPositions[vectorIndex + 1],
+					satellitePreviousVelocities[vectorIndex + 1],
+					satelliteCurrentPositions[vectorIndex + 1],
+					satelliteCurrentVelocities[vectorIndex + 1],
+					normalizedT,
+					spanSeconds
+				);
+				satelliteRenderPositions[vectorIndex + 2] = hermiteInterpolate(
+					satellitePreviousPositions[vectorIndex + 2],
+					satellitePreviousVelocities[vectorIndex + 2],
+					satelliteCurrentPositions[vectorIndex + 2],
+					satelliteCurrentVelocities[vectorIndex + 2],
+					normalizedT,
+					spanSeconds
+				);
+				continue;
+			}
+
+			if (renderTimeMs < previousTimeMs && previousTimeMs > 0) {
+				holdingPrevious += 1;
+				satelliteRenderPositions[vectorIndex] = satellitePreviousPositions[vectorIndex];
+				satelliteRenderPositions[vectorIndex + 1] = satellitePreviousPositions[vectorIndex + 1];
+				satelliteRenderPositions[vectorIndex + 2] = satellitePreviousPositions[vectorIndex + 2];
+				continue;
+			}
+
+			let deltaSeconds = 0;
+			if (renderTimeMs > currentTimeMs) {
+				extrapolating += 1;
+				const rawDeltaSeconds = Math.max(0, (renderTimeMs - currentTimeMs) / 1000);
+				if (rawDeltaSeconds > maxExtrapolationSeconds) {
+					clamped += 1;
+				}
+				deltaSeconds = Math.min(rawDeltaSeconds, maxExtrapolationSeconds);
+			} else {
+				currentSample += 1;
+			}
+			satelliteRenderPositions[vectorIndex] =
+				satelliteCurrentPositions[vectorIndex] +
+				satelliteCurrentVelocities[vectorIndex] * deltaSeconds;
+			satelliteRenderPositions[vectorIndex + 1] =
+				satelliteCurrentPositions[vectorIndex + 1] +
+				satelliteCurrentVelocities[vectorIndex + 1] * deltaSeconds;
+			satelliteRenderPositions[vectorIndex + 2] =
+				satelliteCurrentPositions[vectorIndex + 2] +
+				satelliteCurrentVelocities[vectorIndex + 2] * deltaSeconds;
 		}
+		interpolationHealth = {
+			interpolating,
+			holdingPrevious,
+			currentSample,
+			extrapolating,
+			clamped,
+			missingCurrent
+		};
 	};
 
 	const assignVisibleIndices = () => {
@@ -590,14 +830,30 @@ export const createScene = async (
 		}
 	};
 
-	satelliteWorkers.forEach((worker) => {
+	satelliteWorkers.forEach((worker, workerIndex) => {
+		worker.onmessage = (event: MessageEvent<WorkerLoopStatsMessage>) => {
+			const data = event.data;
+			if (!data || data.type !== 'loop-stats') {
+				return;
+			}
+			workerLoopStats.set(data.workerId, {
+				assignedCount: Number.isFinite(data.assignedCount) ? data.assignedCount : 0,
+				updatedCount: Number.isFinite(data.updatedCount) ? data.updatedCount : 0,
+				loopMs: Number.isFinite(data.loopMs) ? data.loopMs : 0,
+				finishedAtMs: Number.isFinite(data.finishedAtMs) ? data.finishedAtMs : Date.now()
+			});
+		};
 		worker.postMessage({
 			type: 'init',
-			satellitepositions: satelliteTargetPositions,
-			satellitevelocities: satelliteTargetVelocities,
-			satelliteupdatetimes: satelliteUpdateTimes,
+			previousSatellitePositions: satellitePreviousPositions,
+			previousSatelliteVelocities: satellitePreviousVelocities,
+			previousSatelliteUpdateTimes: satellitePreviousUpdateTimes,
+			currentSatellitePositions: satelliteCurrentPositions,
+			currentSatelliteVelocities: satelliteCurrentVelocities,
+			currentSatelliteUpdateTimes: satelliteCurrentUpdateTimes,
 			satelliteData,
-			visibility
+			visibility,
+			workerId: workerIndex
 		});
 		worker.postMessage({
 			type: 'set-update-interval',
@@ -617,6 +873,7 @@ export const createScene = async (
 	};
 	document.addEventListener('visibilitychange', handleVisibilityChange);
 	handleVisibilityChange();
+	createMotionDebugOverlay();
 
 	const geometry = new THREE.BufferGeometry();
 	geometry.setAttribute('position', new THREE.BufferAttribute(satelliteRenderPositions, 3));
@@ -957,7 +1214,7 @@ export const createScene = async (
 		while (Date.now() - startTimeMs < maxWaitMs) {
 			let readyCount = 0;
 			for (let i = 0; i < activeVisibleIndices.length; i++) {
-				if (satelliteUpdateTimes[activeVisibleIndices[i]] > 0) {
+				if (satelliteCurrentUpdateTimes[activeVisibleIndices[i]] > 0) {
 					readyCount += 1;
 					if (readyCount >= minReadySatellites) {
 						return;
@@ -977,7 +1234,8 @@ export const createScene = async (
 			earthMesh.rotation.y =
 				gmstAtReferenceTimeRad + getEarthRotationAtTimeRad(currentTime) + textureAlignmentOffsetRad;
 
-			extrapolateFromVelocity(Date.now());
+			updateRenderPositionsFromSmoothedTrajectory(Date.now());
+			updateMotionDebugOverlay(currentTime);
 			geometry.attributes.position.needsUpdate = true;
 			if (
 				mouseInsideScene &&
@@ -1026,7 +1284,7 @@ export const createScene = async (
 	};
 	resize();
 	await waitForInitialSatelliteData();
-	satelliteRenderPositions.set(satelliteTargetPositions);
+	satelliteRenderPositions.set(satelliteCurrentPositions);
 	animate();
 
 	window.addEventListener('mousemove', updateMouseCoordinates);
@@ -1045,6 +1303,7 @@ export const createScene = async (
 			orbitWorker.terminate();
 			unsubscribeSharedData();
 			document.removeEventListener('visibilitychange', handleVisibilityChange);
+			removeMotionDebugOverlay();
 			window.removeEventListener('resize', resize);
 			window.removeEventListener('mousemove', updateMouseCoordinates);
 			window.removeEventListener('mousedown', onMouseDown);

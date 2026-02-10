@@ -1,7 +1,13 @@
 # Working Notes
 
-Last Updated: 2026-02-08
+Last Updated: 2026-02-10
 
+- `runAssist()` currently returns a compact `[tool-history]` `historyMessages` payload, but Oracle UI never appends it into `chatHistory`, so hidden tool-history continuity is effectively off.
+- Dev routing uses an empty SvelteKit base path (`/oracle`, `/api/*`, `/data/*`); `/satellite-oracle/*` paths are production-only defaults.
+- Re-ran manual query corpus on 2026-02-10 against local `src/data/satellite.db`: counts still match (`Q1=386`, `Q2=53`, Q2 largest state `Japan=9`, `Q3=33`).
+- Motion debug overlay now reports visible/ready counts, stale update age, and per-worker loop timing; when `stale > 2 * workerUpdateInterval`, render extrapolation is clamped and freeze-then-jump risk is high.
+- Smoother motion comes from rendering at a fixed delay using two worker samples (`previous` + `current`) with Hermite interpolation; rotating worker traversal offset each loop removes persistent “early index is fresher” bias.
+- Interpolation-health counters (`interp`/`extrap`/`hold`/`missing`/`clamped`) are gathered inside the existing render-position loop and displayed from cached values, so debug cost avoids an extra full satellite pass.
 - `node:sqlite` `DatabaseSync#prepare` only compiles the first statement; check `statement.sourceSQL` tail to reject extra statements in one tool call.
 - SQLite authorizer action codes provide a robust read-only guard (`SELECT/READ/FUNCTION/RECURSIVE` allow-list) without regex SQL scanning.
 - Keep raw fidelity in dev logs (`ASSIST_LOG_FULL`) and keep markdown trace intentionally compact/readable; they serve different debugging goals.
@@ -21,7 +27,7 @@ Last Updated: 2026-02-08
 - For long replies, scrolling chat to `scrollHeight` lands at the end of the assistant message; scrolling the latest `.message.assistant` into `block: start` keeps reading flow natural.
 - Orbit webs can piggyback on the existing orbit worker by tagging requests as `focus` vs `overlay`; the scene can then track one live focused orbit and many static overlay orbits in parallel.
 - Per-orbit draw calls are the FPS bottleneck for constellation-scale overlays; batching overlay segments into one `THREE.LineSegments` mesh keeps FPS higher without capping orbit count.
-- To preserve query continuity across turns without persisting NORAD arrays, return a compact `[tool-history]` assistant message (with SQL text) and append it as hidden chat history that is still forwarded to `/api/assist`.
+- Intended continuity pattern: return a compact `[tool-history]` assistant message (with SQL text) and append it as hidden chat history forwarded to `/api/assist`; current Oracle UI does not yet append this payload.
 - `deleteUnusedRows()` leaves `gp`/`satcat` at 31,913 rows (from 66,199/67,593 CSV rows), while `discos_objects` stays much larger at 89,099 rows (67,599 with NORAD + 21,500 without), so cross-source count mismatch is expected.
 - CSV diff check: `gp.csv` has 33,051 no-decay rows but prune keeps 31,913, dropping 1,138 non-decayed objects (1,051 are `TBA - TO BE ASSIGNED` with no `satcat` row; 87 have non-empty `satcat.comment`, mostly deep-space/no-elements markers).
 - Of those 1,138 dropped non-decayed GP rows, only 110 map to `discos_objects.norad_cat_id` (~9.7%): 85/87 comment-filtered rows are in DISCOS, but only 25/1,051 missing-`satcat` (TBA-heavy) rows are.
