@@ -10,7 +10,7 @@ Repo: `/home/phlreich/satellite-oracle-svelte`
 
 ## Status Snapshot
 
-- Branch head is `58032a9`.
+- Branch head is `b439ba3`.
 - `/api/assist` uses a direct Responses loop with round-aware tool exposure.
 - Fast path `set_visibility_sql` can apply visibility/orbits/focus plus assistant text in one call.
 - Assistant SQL is restricted to `semantic_*` views.

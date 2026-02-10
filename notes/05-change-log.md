@@ -10,6 +10,7 @@ Last Updated: 2026-02-10
 - Replace single-sample render extrapolation with delayed two-sample Hermite interpolation (`previous` + `current`) for smoother satellite motion.
 - Rotate worker traversal start offsets each loop to remove stable “early index gets fresher updates” bias.
 - Extend motion debug overlay with interpolation-health metrics (`interp`, `extrap`, `hold`, `current`, `missing`, `clamped`) and support `?debugMotion` in production.
+- `b439ba3` Commit scene smoothing + debug metric updates and resync note head snapshots.
 
 ## 2026-02-08
 
