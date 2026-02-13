@@ -448,9 +448,11 @@
 		if ($selectedSatellite?.satrec) {
 			const now = new Date();
 			const positionAndVelocity = propagate($selectedSatellite.satrec, now);
+			if (!positionAndVelocity) {
+				return;
+			}
 			const positionEci = positionAndVelocity.position;
 			const gmst = gstime(now);
-			if (typeof positionEci === 'boolean') throw 'Error propagating satellite position';
 			const positionGd = eciToGeodetic(positionEci, gmst);
 			$selectedSatellite.latitude = degreesLat(positionGd.latitude);
 			$selectedSatellite.longitude = degreesLong(positionGd.longitude);

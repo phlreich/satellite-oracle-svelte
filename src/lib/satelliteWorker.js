@@ -56,11 +56,14 @@ const runLoop = async () => {
 		for (let step = 0; step < indices.length; step++) {
 			const orderedIndex = (step + rotationOffset) % indices.length;
 			const i = indices[orderedIndex];
-			if (visibility[i] > 0) {
-				// we only need to update the positions of satellites that are visible
-				const positionAndVelocity = propagate(satelliteData[i].satrec, currentTime);
-				const position = positionAndVelocity.position;
-				const velocity = positionAndVelocity.velocity;
+				if (visibility[i] > 0) {
+					// we only need to update the positions of satellites that are visible
+					const positionAndVelocity = propagate(satelliteData[i].satrec, currentTime);
+					if (!positionAndVelocity) {
+						continue;
+					}
+					const position = positionAndVelocity.position;
+					const velocity = positionAndVelocity.velocity;
 				if (
 					typeof position === 'object' &&
 					position !== null &&
