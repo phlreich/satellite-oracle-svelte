@@ -52,3 +52,35 @@ Example:
 ```
 LOG_DIR=/var/log/satellite-oracle ./scripts/install-logger.sh
 ```
+
+## Cloudflared watchdog
+
+This repo also ships a watchdog that checks cloudflared liveness through its Prometheus metrics endpoint and auto-recovers on prolonged failure.
+
+### Install (systemd, system-level)
+
+```
+./scripts/install-cloudflared-watchdog.sh
+```
+
+What it does:
+
+- Runs every minute via `satellite-oracle-cloudflared-watchdog.timer`.
+- Reads `cloudflared_tunnel_ha_connections` from `http://127.0.0.1:20241/metrics` (via the nginx container namespace).
+- If HA connections stay below threshold for repeated checks, restarts `nginx` + `cloudflared` with `docker compose up -d`.
+
+### Verify
+
+```
+systemctl status satellite-oracle-cloudflared-watchdog.timer
+journalctl -u satellite-oracle-cloudflared-watchdog.service --no-pager -n 50
+```
+
+### Uninstall
+
+```
+sudo systemctl disable --now satellite-oracle-cloudflared-watchdog.timer
+sudo rm -f /etc/systemd/system/satellite-oracle-cloudflared-watchdog.service
+sudo rm -f /etc/systemd/system/satellite-oracle-cloudflared-watchdog.timer
+sudo systemctl daemon-reload
+```
