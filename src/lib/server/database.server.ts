@@ -38,6 +38,160 @@ function resetDatabaseFiles(filePath: string) {
 	removeIfExistsSync(`${filePath}-shm`);
 }
 
+function tableExists(db: Database.Database, table: string): boolean {
+	return (
+		db
+			.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1")
+			.get(table) !== undefined
+	);
+}
+
+function seedDiscosSnapshotFromLiveDatabase(targetDb: Database.Database) {
+	if (!hasToken(env.TOKEN_DW) || !nfs.existsSync(DB_PATH)) {
+		return;
+	}
+
+	const sourceDb = new Database(DB_PATH, { readonly: true, fileMustExist: true });
+	try {
+		if (
+			!tableExists(sourceDb, 'discos_objects') ||
+			!tableExists(sourceDb, 'discos_object_entities')
+		) {
+			return;
+		}
+
+		const objectCount = (
+			sourceDb.prepare('SELECT COUNT(*) AS count FROM discos_objects').get() as { count: number }
+		).count;
+		const entityCount = (
+			sourceDb
+				.prepare('SELECT COUNT(*) AS count FROM discos_object_entities')
+				.get() as { count: number }
+		).count;
+
+		if (objectCount === 0 && entityCount === 0) {
+			return;
+		}
+
+		const insertObject = targetDb.prepare(`
+			INSERT INTO discos_objects (
+				discos_object_id,
+				norad_cat_id,
+				cospar_id,
+				name,
+				object_class,
+				mission,
+				active,
+				pred_decay_date,
+				mass,
+				launch_id,
+				launch_epoch,
+				launch_cospar_no,
+				launch_failure,
+				launch_vehicle_name,
+				launch_site_name,
+				updated_at
+			)
+			VALUES (
+				@discos_object_id,
+				@norad_cat_id,
+				@cospar_id,
+				@name,
+				@object_class,
+				@mission,
+				@active,
+				@pred_decay_date,
+				@mass,
+				@launch_id,
+				@launch_epoch,
+				@launch_cospar_no,
+				@launch_failure,
+				@launch_vehicle_name,
+				@launch_site_name,
+				@updated_at
+			)
+		`);
+		const insertEntity = targetDb.prepare(`
+			INSERT INTO discos_object_entities (
+				discos_object_id,
+				norad_cat_id,
+				role,
+				entity_id,
+				entity_type,
+				entity_name
+			)
+			VALUES (
+				@discos_object_id,
+				@norad_cat_id,
+				@role,
+				@entity_id,
+				@entity_type,
+				@entity_name
+			)
+		`);
+
+		targetDb.exec('BEGIN');
+		try {
+			for (const row of sourceDb
+				.prepare(
+					`SELECT
+						discos_object_id,
+						norad_cat_id,
+						cospar_id,
+						name,
+						object_class,
+						mission,
+						active,
+						pred_decay_date,
+						mass,
+						launch_id,
+						launch_epoch,
+						launch_cospar_no,
+						launch_failure,
+						launch_vehicle_name,
+						launch_site_name,
+						updated_at
+					FROM discos_objects`
+				)
+				.iterate()) {
+				insertObject.run(row);
+			}
+
+			for (const row of sourceDb
+				.prepare(
+					`SELECT
+						discos_object_id,
+						norad_cat_id,
+						role,
+						entity_id,
+						entity_type,
+						entity_name
+					FROM discos_object_entities`
+				)
+				.iterate()) {
+				insertEntity.run(row);
+			}
+			targetDb.exec('COMMIT');
+		} catch (error) {
+			targetDb.exec('ROLLBACK');
+			throw error;
+		}
+
+		dbLogger.info('seeded discos snapshot from live database', {
+			sourcePath: DB_PATH,
+			objectCount,
+			entityCount
+		});
+	} catch (error) {
+		dbLogger.warn('failed to seed existing discos snapshot', {
+			sourcePath: DB_PATH,
+			error: serializeError(error)
+		});
+	} finally {
+		sourceDb.close();
+	}
+}
+
 function createCoreTables(db: Database.Database) {
 	db.exec(`
 		CREATE TABLE IF NOT EXISTS boxscore (
@@ -471,6 +625,7 @@ async function buildNextDatabase(targetPath: string) {
 	try {
 		createCoreTables(db);
 		ensureDiscosTables(db);
+		seedDiscosSnapshotFromLiveDatabase(db);
 		await loadCsvIntoTable(db, 'satcat', `${process.cwd()}/src/data/satcat.csv`, 'insert');
 		await loadCsvIntoTable(db, 'boxscore', `${process.cwd()}/src/data/boxscore.csv`, 'insert');
 		await loadCsvIntoTable(db, 'gp', `${process.cwd()}/src/data/gp.csv`, 'replace');

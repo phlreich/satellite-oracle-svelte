@@ -1,11 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { runAssistMock } = vi.hoisted(() => ({
-	runAssistMock: vi.fn()
+const { runAssistMock, waitForStartupInitializationMock } = vi.hoisted(() => ({
+	runAssistMock: vi.fn(),
+	waitForStartupInitializationMock: vi.fn().mockResolvedValue(undefined)
 }));
 
 vi.mock('$lib/server/assist/assistant', () => ({
 	runAssist: runAssistMock
+}));
+
+vi.mock('$lib/server/startup.server', () => ({
+	waitForStartupInitialization: waitForStartupInitializationMock
 }));
 
 import { POST } from '../../src/routes/api/assist/+server';
@@ -13,6 +18,7 @@ import { POST } from '../../src/routes/api/assist/+server';
 describe('/api/assist route', () => {
 	beforeEach(() => {
 		runAssistMock.mockReset();
+		waitForStartupInitializationMock.mockResolvedValue(undefined);
 	});
 
 	it('returns structured assistant fallback on backend errors', async () => {
