@@ -9,6 +9,12 @@ type SceneDataRow = [string, string, string, number, string];
 type QueryResultRow = { NORAD_CAT_ID: number };
 type SharedSceneData = [QueryResultRow[], 'replace' | 'add' | 'remove'] | [];
 type OrbitOverlayMode = 'replace' | 'add' | 'remove';
+type SceneSatellite = {
+	tleLine1: string;
+	tleLine2: string;
+	norad_cat_id: number;
+	satrec?: unknown;
+};
 type OrbitWorkerPoint = { x: number; y: number; z: number };
 type OrbitWorkerResponse = {
 	type: 'orbit-points';
@@ -267,16 +273,24 @@ export const createScene = async (
 	// Show all loaded objects by default.
 	visibility.fill(1);
 
-	const satelliteData = satellites.map((sat: SceneDataRow) => {
-		const [epoch, tleLine1, tleLine2, norad_cat_id] = sat;
-		const satrec = twoline2satrec(tleLine1, tleLine2);
-		const epochDate = new Date(epoch);
-		return { satrec, epoch: epochDate, norad_cat_id };
+	const satelliteData: SceneSatellite[] = satellites.map((sat: SceneDataRow) => {
+		const [, tleLine1, tleLine2, norad_cat_id] = sat;
+		return { tleLine1, tleLine2, norad_cat_id };
 	});
 	const satelliteIndexByNoradId = new Map<number, number>();
 	for (let i = 0; i < satelliteData.length; i++) {
 		satelliteIndexByNoradId.set(satelliteData[i].norad_cat_id, i);
 	}
+	const getSatelliteSatrec = (index: number) => {
+		const satellite = satelliteData[index];
+		if (!satellite) {
+			return undefined;
+		}
+		if (!satellite.satrec) {
+			satellite.satrec = twoline2satrec(satellite.tleLine1, satellite.tleLine2);
+		}
+		return satellite.satrec;
+	};
 	const workerUpdateIntervalMs = 250;
 	const motionSmoothingDelayMs = Math.max(120, Math.round(workerUpdateIntervalMs * 0.9));
 	const maxExtrapolationSeconds = (workerUpdateIntervalMs * 2) / 1000;
@@ -1037,7 +1051,7 @@ export const createScene = async (
 			details: satellites[index][1] + '\n' + satellites[index][2],
 			noradCatId: satelliteData[index].norad_cat_id,
 			index: index,
-			satrec: satelliteData[index].satrec
+			satrec: getSatelliteSatrec(index)
 		});
 		localSelectedSatellite = index;
 
@@ -1206,9 +1220,9 @@ export const createScene = async (
 		if (activeVisibleIndices.length === 0) {
 			return;
 		}
-		const minReadySatellites = Math.min(250, activeVisibleIndices.length);
-		const maxWaitMs = 3000;
-		const pollIntervalMs = 40;
+		const minReadySatellites = Math.min(24, activeVisibleIndices.length);
+		const maxWaitMs = 800;
+		const pollIntervalMs = 20;
 		const startTimeMs = Date.now();
 
 		while (Date.now() - startTimeMs < maxWaitMs) {

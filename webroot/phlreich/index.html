@@ -77,7 +77,7 @@
 		<div class="rule"></div>
 		<div class="section-label">Projects</div>
 		<div class="entries">
-			<a class="entry" href="/satellite-oracle" data-warm-target="satellite-oracle">
+			<a class="entry" href="/satellite-oracle/" data-warm-target="satellite-oracle">
 				Satellite Oracle
 			</a>
 		</div>
@@ -110,13 +110,17 @@
 
 				const scheduleWarmup = () => {
 					if ('requestIdleCallback' in window) {
-						window.requestIdleCallback(warmSceneData, { timeout: 1500 });
+						window.requestIdleCallback(warmSceneData, { timeout: 250 });
 						return;
 					}
-					window.setTimeout(warmSceneData, 700);
+					window.setTimeout(warmSceneData, 0);
 				};
 
-				window.addEventListener('load', scheduleWarmup, { once: true });
+				if (document.readyState === 'loading') {
+					document.addEventListener('DOMContentLoaded', scheduleWarmup, { once: true });
+				} else {
+					scheduleWarmup();
+				}
 
 				if (!oracleLink) {
 					return;

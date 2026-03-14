@@ -1,9 +1,20 @@
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-nocheck
 // orbitWorker.js
-import { propagate } from 'satellite.js';
+import { propagate, twoline2satrec } from 'satellite.js';
 
 let satelliteData;
+
+function getSatrec(satelliteIndex) {
+	const satellite = satelliteData?.[satelliteIndex];
+	if (!satellite) {
+		return null;
+	}
+	if (!satellite.satrec) {
+		satellite.satrec = twoline2satrec(satellite.tleLine1, satellite.tleLine2);
+	}
+	return satellite.satrec;
+}
 
 onmessage = function (event) {
 	if (event.data.type === 'init') {
@@ -43,7 +54,7 @@ function calculateOrbitPoints({
 	centerAroundStartTime
 }) {
 	const points = [];
-	const satrec = satelliteData?.[satelliteIndex]?.satrec;
+	const satrec = getSatrec(satelliteIndex);
 	if (!satrec) {
 		return points;
 	}

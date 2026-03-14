@@ -1,5 +1,5 @@
 // satelliteWorker.js
-import { propagate } from 'satellite.js';
+import { propagate, twoline2satrec } from 'satellite.js';
 
 /** @type {Float32Array | null} */
 let previousSatellitePositions = null;
@@ -13,7 +13,7 @@ let currentSatellitePositions = null;
 let currentSatelliteVelocities = null;
 /** @type {Float64Array | null} */
 let currentSatelliteUpdateTimes = null;
-/** @type {Array<{ satrec: any }> | null} */
+/** @type {Array<{ tleLine1: string, tleLine2: string, satrec?: any }> | null} */
 let satelliteData = null;
 /** @type {Uint8Array | null} */
 let visibility = null;
@@ -27,6 +27,18 @@ let rotationOffset = 0;
 
 /** @param {number} ms */
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** @param {number} index */
+const getSatrec = (index) => {
+	const satellite = satelliteData?.[index];
+	if (!satellite) {
+		return null;
+	}
+	if (!satellite.satrec) {
+		satellite.satrec = twoline2satrec(satellite.tleLine1, satellite.tleLine2);
+	}
+	return satellite.satrec;
+};
 
 const runLoop = async () => {
 	while (true) {
@@ -56,14 +68,18 @@ const runLoop = async () => {
 		for (let step = 0; step < indices.length; step++) {
 			const orderedIndex = (step + rotationOffset) % indices.length;
 			const i = indices[orderedIndex];
-				if (visibility[i] > 0) {
-					// we only need to update the positions of satellites that are visible
-					const positionAndVelocity = propagate(satelliteData[i].satrec, currentTime);
-					if (!positionAndVelocity) {
-						continue;
-					}
-					const position = positionAndVelocity.position;
-					const velocity = positionAndVelocity.velocity;
+			if (visibility[i] > 0) {
+				// we only need to update the positions of satellites that are visible
+				const satrec = getSatrec(i);
+				if (!satrec) {
+					continue;
+				}
+				const positionAndVelocity = propagate(satrec, currentTime);
+				if (!positionAndVelocity) {
+					continue;
+				}
+				const position = positionAndVelocity.position;
+				const velocity = positionAndVelocity.velocity;
 				if (
 					typeof position === 'object' &&
 					position !== null &&
