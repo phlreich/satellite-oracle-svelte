@@ -47,6 +47,12 @@ const TRACE_TABLE_MAX_ROWS = 20;
 const TRACE_TABLE_MAX_COLUMNS = 9;
 const TRACE_TABLE_MAX_CELL = 120;
 
+type SceneUniverse = {
+	noradCatIds: number[];
+	noradIdSet: Set<number>;
+	totalCount: number;
+};
+
 type TraceEvent = {
 	title: string;
 	summary?: Record<string, unknown>;
@@ -105,6 +111,43 @@ function summarizeAction(action: AssistSceneAction): Record<string, unknown> {
 		hasFocusAction: Boolean(action.focus),
 		focusTarget: action.focus?.target ?? null,
 		focusNoradId: action.focus?.target === 'norad' ? action.focus.noradCatId : null
+	};
+}
+
+function loadSceneUniverse(db: Database.Database): SceneUniverse {
+	const rows = db
+		.prepare(
+			`
+				SELECT DISTINCT gp.NORAD_CAT_ID AS norad_cat_id
+				FROM gp
+				JOIN satcat ON gp.NORAD_CAT_ID = satcat.NORAD_CAT_ID
+				WHERE gp.NORAD_CAT_ID IS NOT NULL
+				ORDER BY gp.NORAD_CAT_ID
+			`
+		)
+		.all() as Array<{ norad_cat_id: number | string }>;
+	const noradCatIds = rows
+		.map((row) =>
+			typeof row.norad_cat_id === 'number' ? row.norad_cat_id : Number(row.norad_cat_id)
+		)
+		.filter((value) => Number.isFinite(value) && value > 0)
+		.map((value) => Math.floor(value));
+	return {
+		noradCatIds,
+		noradIdSet: new Set(noradCatIds),
+		totalCount: noradCatIds.length
+	};
+}
+
+function filterNoradIdsToSceneUniverse(ids: number[], sceneUniverse: SceneUniverse): number[] {
+	return ids.filter((id) => sceneUniverse.noradIdSet.has(id));
+}
+
+function filterNoradIdsWithSummary(ids: number[], sceneUniverse: SceneUniverse) {
+	const sceneIds = filterNoradIdsToSceneUniverse(ids, sceneUniverse);
+	return {
+		sceneIds,
+		filteredOutCount: Math.max(0, ids.length - sceneIds.length)
 	};
 }
 
@@ -399,6 +442,7 @@ function renderTraceMarkdown({
 	requestId,
 	model,
 	sceneContext,
+	sceneUniverse,
 	messages,
 	events,
 	assistantMessage,
@@ -409,6 +453,7 @@ function renderTraceMarkdown({
 	requestId: string;
 	model: string;
 	sceneContext: ReturnType<typeof normalizeSceneContext>;
+	sceneUniverse: SceneUniverse;
 	messages: AssistRequestBody['messages'];
 	events: TraceEvent[];
 	assistantMessage: string;
@@ -452,6 +497,7 @@ function renderTraceMarkdown({
 	lines.push(`- selectedNoradId: \`${sceneContext.selectedNoradId}\``);
 	lines.push(`- visibleCount: \`${sceneContext.visibleCount}\``);
 	lines.push(`- selectedInfoPanel: \`${sceneContext.selectedInfoPanel}\``);
+	lines.push(`- sceneUniverseCount: \`${sceneUniverse.totalCount}\``);
 	lines.push('');
 	lines.push('## Timeline');
 	lines.push('');
@@ -564,6 +610,8 @@ function summarizeToolOutput(
 			mode: output.mode ?? null,
 			returned_count: output.returned_count ?? null,
 			row_count: output.row_count ?? null,
+			filtered_out_count: output.filtered_out_count ?? null,
+			scene_total_count: output.scene_total_count ?? null,
 			id_column: output.id_column ?? null,
 			orbit_mode: output.orbit_mode ?? null,
 			assistant_message:
@@ -595,6 +643,7 @@ function summarizeToolOutput(
 			ok: output.ok ?? null,
 			mode: output.mode ?? null,
 			returned_count: output.returned_count ?? null,
+			filtered_out_count: output.filtered_out_count ?? null,
 			id_column: output.id_column ?? null
 		};
 	}
@@ -615,7 +664,7 @@ function formatToolHistoryEntry(
 ): string {
 	if (toolName === 'set_visibility_sql') {
 		const sql = typeof toolArgs.sql === 'string' ? toolArgs.sql.trim() : '';
-		return `set_visibility_sql mode=${toolArgs.mode ?? null} row_count=${output.row_count ?? null} returned_count=${output.returned_count ?? null} id_column=${output.id_column ?? null} set_orbits_mode=${toolArgs.set_orbits_mode ?? null} focus_target=${toolArgs.focus_target ?? null} focus_norad_id=${toolArgs.focus_norad_id ?? null} assistant_message=${JSON.stringify(typeof toolArgs.assistant_message === 'string' ? shortText(toolArgs.assistant_message, 90) : null)} sql=${JSON.stringify(sql)}`;
+		return `set_visibility_sql mode=${toolArgs.mode ?? null} row_count=${output.row_count ?? null} returned_count=${output.returned_count ?? null} filtered_out_count=${output.filtered_out_count ?? null} id_column=${output.id_column ?? null} set_orbits_mode=${toolArgs.set_orbits_mode ?? null} focus_target=${toolArgs.focus_target ?? null} focus_norad_id=${toolArgs.focus_norad_id ?? null} assistant_message=${JSON.stringify(typeof toolArgs.assistant_message === 'string' ? shortText(toolArgs.assistant_message, 90) : null)} sql=${JSON.stringify(sql)}`;
 	}
 	if (toolName === 'sql_select') {
 		const sql = typeof toolArgs.sql === 'string' ? toolArgs.sql.trim() : '';
@@ -624,16 +673,16 @@ function formatToolHistoryEntry(
 		return `sql_select sql=${JSON.stringify(sql)} row_count=${rowCount} result_ref=${resultRef}`;
 	}
 	if (toolName === 'set_visibility_from_result') {
-		return `set_visibility_from_result result_ref=${toolArgs.result_ref ?? null} mode=${toolArgs.mode ?? null} id_column=${toolArgs.id_column ?? null} returned_count=${output.returned_count ?? null}`;
+		return `set_visibility_from_result result_ref=${toolArgs.result_ref ?? null} mode=${toolArgs.mode ?? null} id_column=${toolArgs.id_column ?? null} returned_count=${output.returned_count ?? null} filtered_out_count=${output.filtered_out_count ?? null}`;
 	}
 	if (toolName === 'set_visibility') {
-		return `set_visibility mode=${toolArgs.mode ?? null} returned_count=${output.returned_count ?? null}`;
+		return `set_visibility mode=${toolArgs.mode ?? null} returned_count=${output.returned_count ?? null} filtered_out_count=${output.filtered_out_count ?? null}`;
 	}
 	if (toolName === 'set_orbits_from_result') {
-		return `set_orbits_from_result result_ref=${toolArgs.result_ref ?? null} mode=${toolArgs.mode ?? null} id_column=${toolArgs.id_column ?? null} returned_count=${output.returned_count ?? null}`;
+		return `set_orbits_from_result result_ref=${toolArgs.result_ref ?? null} mode=${toolArgs.mode ?? null} id_column=${toolArgs.id_column ?? null} returned_count=${output.returned_count ?? null} filtered_out_count=${output.filtered_out_count ?? null}`;
 	}
 	if (toolName === 'set_orbits') {
-		return `set_orbits mode=${toolArgs.mode ?? null} returned_count=${output.returned_count ?? null}`;
+		return `set_orbits mode=${toolArgs.mode ?? null} returned_count=${output.returned_count ?? null} filtered_out_count=${output.filtered_out_count ?? null}`;
 	}
 	if (toolName === 'set_focus') {
 		return `set_focus target=${toolArgs.target ?? null} norad_id=${toolArgs.norad_id ?? null}`;
@@ -650,6 +699,8 @@ function summarizeFunctionCallOutputForTrace(
 		result_ref: parsedOutput.result_ref ?? null,
 		row_count: parsedOutput.row_count ?? null,
 		returned_count: parsedOutput.returned_count ?? null,
+		filtered_out_count: parsedOutput.filtered_out_count ?? null,
+		scene_total_count: parsedOutput.scene_total_count ?? null,
 		mode: parsedOutput.mode ?? null,
 		id_column: parsedOutput.id_column ?? null,
 		assistant_message:
@@ -687,7 +738,7 @@ const SET_VISIBILITY_SQL_TOOL: FunctionTool = {
 	type: 'function',
 	name: 'set_visibility_sql',
 	description:
-		'Fast path: run one read-only SELECT, extract NORAD IDs, and apply scene visibility immediately. Use this for obvious requests like debris filters to minimize latency. Optional orbit and focus updates can be applied in the same call. Provide assistant_message when you want to answer the user in this same call.',
+		'Fast path: run one read-only SELECT, extract NORAD IDs, intersect them with the current scene universe, and apply scene visibility immediately. Use this for obvious requests like debris filters to minimize latency. Optional orbit and focus updates can be applied in the same call. Provide assistant_message when you want to answer the user in this same call.',
 	strict: false,
 	parameters: {
 		type: 'object',
@@ -709,7 +760,7 @@ const SET_VISIBILITY_FROM_RESULT_TOOL: FunctionTool = {
 	type: 'function',
 	name: 'set_visibility_from_result',
 	description:
-		'Set scene visibility using NORAD IDs from a prior sql_select result_ref and an ID column.',
+		'Set scene visibility using NORAD IDs from a prior sql_select result_ref and an ID column. Only NORAD IDs present in the current scene universe can be applied.',
 	strict: false,
 	parameters: {
 		type: 'object',
@@ -726,7 +777,8 @@ const SET_VISIBILITY_FROM_RESULT_TOOL: FunctionTool = {
 const SET_VISIBILITY_TOOL: FunctionTool = {
 	type: 'function',
 	name: 'set_visibility',
-	description: 'Set scene visibility directly from an explicit list of NORAD IDs.',
+	description:
+		'Set scene visibility directly from an explicit list of NORAD IDs. Only NORAD IDs present in the current scene universe can be applied.',
 	strict: false,
 	parameters: {
 		type: 'object',
@@ -746,7 +798,7 @@ const SET_ORBITS_FROM_RESULT_TOOL: FunctionTool = {
 	type: 'function',
 	name: 'set_orbits_from_result',
 	description:
-		'Draw orbit trails using NORAD IDs from a prior sql_select result_ref and an ID column.',
+		'Draw orbit trails using NORAD IDs from a prior sql_select result_ref and an ID column. Only NORAD IDs present in the current scene universe can be applied.',
 	strict: false,
 	parameters: {
 		type: 'object',
@@ -763,7 +815,8 @@ const SET_ORBITS_FROM_RESULT_TOOL: FunctionTool = {
 const SET_ORBITS_TOOL: FunctionTool = {
 	type: 'function',
 	name: 'set_orbits',
-	description: 'Draw orbit trails from an explicit list of NORAD IDs.',
+	description:
+		'Draw orbit trails from an explicit list of NORAD IDs. Only NORAD IDs present in the current scene universe can be applied.',
 	strict: false,
 	parameters: {
 		type: 'object',
@@ -782,7 +835,8 @@ const SET_ORBITS_TOOL: FunctionTool = {
 const SET_FOCUS_TOOL: FunctionTool = {
 	type: 'function',
 	name: 'set_focus',
-	description: 'Set camera focus to Earth or one NORAD object.',
+	description:
+		'Set camera focus to Earth or one NORAD object. NORAD focus targets must be present in the current scene universe.',
 	strict: false,
 	parameters: {
 		type: 'object',
@@ -1020,15 +1074,18 @@ function buildDatabaseContext(db: Database.Database) {
 
 function buildInstructions({
 	sceneContext,
+	sceneUniverse,
 	databaseContext
 }: {
 	sceneContext: ReturnType<typeof normalizeSceneContext>;
+	sceneUniverse: SceneUniverse;
 	databaseContext: string;
 }): string {
 	return [
 		'You are the Satellite Oracle assistant.',
-		`sql_select may be used at most ${SQL_SELECT_BUDGET} times per request; then you must use an action tool.`,
 		`Scene context: ${JSON.stringify(sceneContext)}.`,
+		`Current scene universe: ${sceneUniverse.totalCount} loadable NORAD objects from gp JOIN satcat (the same set served by scene-data.json).`,
+		`sql_select may be used at most ${SQL_SELECT_BUDGET} times per request; then you must use an action tool.`,
 		databaseContext
 	].join('\n');
 }
@@ -1161,6 +1218,7 @@ function extractNoradIdsFromRows({
 
 async function executeToolCall({
 	db,
+	sceneUniverse,
 	toolName,
 	toolArgs,
 	queryResults,
@@ -1170,6 +1228,7 @@ async function executeToolCall({
 	fullLog
 }: {
 	db: Database.Database;
+	sceneUniverse: SceneUniverse;
 	toolName: string;
 	toolArgs: Record<string, unknown>;
 	queryResults: Map<string, QueryResultStore>;
@@ -1221,14 +1280,27 @@ async function executeToolCall({
 					available_columns: columns
 				};
 			}
+			const { sceneIds, filteredOutCount } = filterNoradIdsWithSummary(
+				extraction.ids,
+				sceneUniverse
+			);
+			if (extraction.ids.length > 0 && sceneIds.length === 0) {
+				return {
+					ok: false,
+					error: 'Query returned NORAD IDs, but none are present in the current scene universe.',
+					available_columns: columns,
+					filtered_out_count: filteredOutCount,
+					scene_total_count: sceneUniverse.totalCount
+				};
+			}
 			pendingAction.visibility = {
 				mode,
-				noradCatIds: extraction.ids,
-				returnedCount: extraction.ids.length
+				noradCatIds: sceneIds,
+				returnedCount: sceneIds.length
 			};
 			const orbitsMode = normalizeMode(toolArgs.set_orbits_mode);
 			if (orbitsMode) {
-				if (orbitsMode !== 'replace' && extraction.ids.length === 0) {
+				if (orbitsMode !== 'replace' && sceneIds.length === 0) {
 					return {
 						ok: false,
 						error: 'set_orbits_mode requires NORAD IDs for add/remove.',
@@ -1237,18 +1309,18 @@ async function executeToolCall({
 				}
 				pendingAction.orbits = {
 					mode: orbitsMode,
-					noradCatIds: extraction.ids,
-					returnedCount: extraction.ids.length
+					noradCatIds: sceneIds,
+					returnedCount: sceneIds.length
 				};
 			}
 			const focusTarget = toolArgs.focus_target;
 			if (focusTarget === 'earth') {
 				pendingAction.focus = { target: 'earth' };
 			} else if (focusTarget === 'first_result') {
-				if (extraction.ids.length === 0) {
+				if (sceneIds.length === 0) {
 					return { ok: false, error: 'focus_target=first_result requires at least one NORAD ID.' };
 				}
-				pendingAction.focus = { target: 'norad', noradCatId: extraction.ids[0] };
+				pendingAction.focus = { target: 'norad', noradCatId: sceneIds[0] };
 			} else if (focusTarget === 'norad') {
 				const rawNorad = toolArgs.focus_norad_id;
 				const noradId =
@@ -1256,13 +1328,21 @@ async function executeToolCall({
 				if (!noradId || noradId <= 0) {
 					return { ok: false, error: 'focus_target=norad requires focus_norad_id.' };
 				}
+				if (!sceneUniverse.noradIdSet.has(noradId)) {
+					return {
+						ok: false,
+						error: `NORAD ${noradId} is not present in the current scene universe.`
+					};
+				}
 				pendingAction.focus = { target: 'norad', noradCatId: noradId };
 			}
 			const durationMs = Date.now() - startedAt;
 			logger.info('set_visibility_sql executed', {
 				mode,
 				rowCount: rows.length,
-				returnedCount: extraction.ids.length,
+				returnedCount: sceneIds.length,
+				filteredOutCount,
+				sceneTotalCount: sceneUniverse.totalCount,
 				resolvedColumn: extraction.resolvedColumn,
 				orbitMode: pendingAction.orbits?.mode ?? null,
 				focusTarget: pendingAction.focus?.target ?? null,
@@ -1274,9 +1354,12 @@ async function executeToolCall({
 				mode,
 				rowCount: rows.length,
 				columns,
-				returnedCount: extraction.ids.length,
+				returnedCount: sceneIds.length,
 				resolvedColumn: extraction.resolvedColumn,
-				noradCatIds: extraction.ids,
+				requestedNoradCatIds: extraction.ids,
+				noradCatIds: sceneIds,
+				filteredOutCount,
+				sceneTotalCount: sceneUniverse.totalCount,
 				orbitMode: pendingAction.orbits?.mode ?? null,
 				focus: pendingAction.focus ?? null,
 				assistantMessage
@@ -1286,7 +1369,9 @@ async function executeToolCall({
 				summary: {
 					mode,
 					row_count: rows.length,
-					returned_count: extraction.ids.length,
+					returned_count: sceneIds.length,
+					filtered_out_count: filteredOutCount,
+					scene_total_count: sceneUniverse.totalCount,
 					id_column: extraction.resolvedColumn,
 					orbit_mode: pendingAction.orbits?.mode ?? null,
 					focus_target: pendingAction.focus?.target ?? null,
@@ -1299,8 +1384,11 @@ async function executeToolCall({
 					row_count: rows.length,
 					columns,
 					id_column: extraction.resolvedColumn,
-					returned_count: extraction.ids.length,
-					norad_preview: extraction.ids.slice(0, 50),
+					returned_count: sceneIds.length,
+					filtered_out_count: filteredOutCount,
+					scene_total_count: sceneUniverse.totalCount,
+					requested_norad_preview: extraction.ids.slice(0, 50),
+					norad_preview: sceneIds.slice(0, 50),
 					orbit_mode: pendingAction.orbits?.mode ?? null,
 					focus: pendingAction.focus ?? null,
 					assistant_message: assistantMessage
@@ -1310,7 +1398,9 @@ async function executeToolCall({
 				ok: true,
 				mode,
 				row_count: rows.length,
-				returned_count: extraction.ids.length,
+				returned_count: sceneIds.length,
+				filtered_out_count: filteredOutCount,
+				scene_total_count: sceneUniverse.totalCount,
 				id_column: extraction.resolvedColumn,
 				orbit_mode: pendingAction.orbits?.mode ?? null,
 				focus: pendingAction.focus ?? null,
@@ -1428,41 +1518,61 @@ async function executeToolCall({
 				available_columns: storedResult.columns
 			};
 		}
+		const { sceneIds, filteredOutCount } = filterNoradIdsWithSummary(
+			extraction.ids,
+			sceneUniverse
+		);
+		if (sceneIds.length === 0) {
+			return {
+				ok: false,
+				error: 'Result rows contained NORAD IDs, but none are present in the current scene universe.',
+				available_columns: storedResult.columns,
+				filtered_out_count: filteredOutCount,
+				scene_total_count: sceneUniverse.totalCount
+			};
+		}
 		pendingAction.visibility = {
 			mode,
-			noradCatIds: extraction.ids,
-			returnedCount: extraction.ids.length
+			noradCatIds: sceneIds,
+			returnedCount: sceneIds.length
 		};
 		logger.info('visibility action prepared from result', {
 			mode,
-			returnedCount: extraction.ids.length,
+			returnedCount: sceneIds.length,
+			filteredOutCount,
 			resolvedColumn: extraction.resolvedColumn
 		});
 		fullLog?.('visibility action prepared from result full', {
 			mode,
-			returnedCount: extraction.ids.length,
+			returnedCount: sceneIds.length,
+			filteredOutCount,
 			resolvedColumn: extraction.resolvedColumn,
-			noradCatIds: extraction.ids
+			requestedNoradCatIds: extraction.ids,
+			noradCatIds: sceneIds
 		});
 		traceEvent?.({
 			title: 'Tool result: set_visibility_from_result',
 			summary: {
 				mode,
-				returned_count: extraction.ids.length,
+				returned_count: sceneIds.length,
+				filtered_out_count: filteredOutCount,
 				id_column: extraction.resolvedColumn
 			},
 			details: {
 				mode,
 				result_ref: resultRef,
 				id_column: extraction.resolvedColumn,
-				returned_count: extraction.ids.length,
-				norad_preview: extraction.ids.slice(0, 50)
+				returned_count: sceneIds.length,
+				filtered_out_count: filteredOutCount,
+				requested_norad_preview: extraction.ids.slice(0, 50),
+				norad_preview: sceneIds.slice(0, 50)
 			}
 		});
 		return {
 			ok: true,
 			mode,
-			returned_count: extraction.ids.length,
+			returned_count: sceneIds.length,
+			filtered_out_count: filteredOutCount,
 			id_column: extraction.resolvedColumn
 		};
 	}
@@ -1473,27 +1583,49 @@ async function executeToolCall({
 		if (!mode || noradIds.length === 0) {
 			return { ok: false, error: 'set_visibility requires mode and at least one valid NORAD ID.' };
 		}
+		const { sceneIds, filteredOutCount } = filterNoradIdsWithSummary(noradIds, sceneUniverse);
+		if (sceneIds.length === 0) {
+			return {
+				ok: false,
+				error: 'None of the requested NORAD IDs are present in the current scene universe.',
+				filtered_out_count: filteredOutCount,
+				scene_total_count: sceneUniverse.totalCount
+			};
+		}
 		pendingAction.visibility = {
 			mode,
-			noradCatIds: noradIds,
-			returnedCount: noradIds.length
+			noradCatIds: sceneIds,
+			returnedCount: sceneIds.length
 		};
-		logger.info('visibility action prepared', { mode, returnedCount: noradIds.length });
+		logger.info('visibility action prepared', {
+			mode,
+			returnedCount: sceneIds.length,
+			filteredOutCount
+		});
 		fullLog?.('visibility action prepared full', {
 			mode,
-			returnedCount: noradIds.length,
-			noradCatIds: noradIds
+			returnedCount: sceneIds.length,
+			filteredOutCount,
+			requestedNoradCatIds: noradIds,
+			noradCatIds: sceneIds
 		});
 		traceEvent?.({
 			title: 'Tool result: set_visibility',
-			summary: { mode, returned_count: noradIds.length },
+			summary: { mode, returned_count: sceneIds.length, filtered_out_count: filteredOutCount },
 			details: {
 				mode,
-				returned_count: noradIds.length,
-				norad_preview: noradIds.slice(0, 50)
+				returned_count: sceneIds.length,
+				filtered_out_count: filteredOutCount,
+				requested_norad_preview: noradIds.slice(0, 50),
+				norad_preview: sceneIds.slice(0, 50)
 			}
 		});
-		return { ok: true, mode, returned_count: noradIds.length };
+		return {
+			ok: true,
+			mode,
+			returned_count: sceneIds.length,
+			filtered_out_count: filteredOutCount
+		};
 	}
 
 	if (toolName === 'set_orbits_from_result') {
@@ -1519,41 +1651,61 @@ async function executeToolCall({
 				available_columns: storedResult.columns
 			};
 		}
+		const { sceneIds, filteredOutCount } = filterNoradIdsWithSummary(
+			extraction.ids,
+			sceneUniverse
+		);
+		if (extraction.ids.length > 0 && sceneIds.length === 0) {
+			return {
+				ok: false,
+				error: 'Result rows contained NORAD IDs, but none are present in the current scene universe.',
+				available_columns: storedResult.columns,
+				filtered_out_count: filteredOutCount,
+				scene_total_count: sceneUniverse.totalCount
+			};
+		}
 		pendingAction.orbits = {
 			mode,
-			noradCatIds: extraction.ids,
-			returnedCount: extraction.ids.length
+			noradCatIds: sceneIds,
+			returnedCount: sceneIds.length
 		};
 		logger.info('orbit action prepared from result', {
 			mode,
-			returnedCount: extraction.ids.length,
+			returnedCount: sceneIds.length,
+			filteredOutCount,
 			resolvedColumn: extraction.resolvedColumn
 		});
 		fullLog?.('orbit action prepared from result full', {
 			mode,
-			returnedCount: extraction.ids.length,
+			returnedCount: sceneIds.length,
+			filteredOutCount,
 			resolvedColumn: extraction.resolvedColumn,
-			noradCatIds: extraction.ids
+			requestedNoradCatIds: extraction.ids,
+			noradCatIds: sceneIds
 		});
 		traceEvent?.({
 			title: 'Tool result: set_orbits_from_result',
 			summary: {
 				mode,
-				returned_count: extraction.ids.length,
+				returned_count: sceneIds.length,
+				filtered_out_count: filteredOutCount,
 				id_column: extraction.resolvedColumn
 			},
 			details: {
 				mode,
 				result_ref: resultRef,
 				id_column: extraction.resolvedColumn,
-				returned_count: extraction.ids.length,
-				norad_preview: extraction.ids.slice(0, 50)
+				returned_count: sceneIds.length,
+				filtered_out_count: filteredOutCount,
+				requested_norad_preview: extraction.ids.slice(0, 50),
+				norad_preview: sceneIds.slice(0, 50)
 			}
 		});
 		return {
 			ok: true,
 			mode,
-			returned_count: extraction.ids.length,
+			returned_count: sceneIds.length,
+			filtered_out_count: filteredOutCount,
 			id_column: extraction.resolvedColumn
 		};
 	}
@@ -1564,27 +1716,49 @@ async function executeToolCall({
 		if (!mode || (mode !== 'replace' && noradIds.length === 0)) {
 			return { ok: false, error: 'set_orbits requires mode and valid NORAD IDs.' };
 		}
+		const { sceneIds, filteredOutCount } = filterNoradIdsWithSummary(noradIds, sceneUniverse);
+		if (noradIds.length > 0 && sceneIds.length === 0) {
+			return {
+				ok: false,
+				error: 'None of the requested NORAD IDs are present in the current scene universe.',
+				filtered_out_count: filteredOutCount,
+				scene_total_count: sceneUniverse.totalCount
+			};
+		}
 		pendingAction.orbits = {
 			mode,
-			noradCatIds: noradIds,
-			returnedCount: noradIds.length
+			noradCatIds: sceneIds,
+			returnedCount: sceneIds.length
 		};
-		logger.info('orbit action prepared', { mode, returnedCount: noradIds.length });
+		logger.info('orbit action prepared', {
+			mode,
+			returnedCount: sceneIds.length,
+			filteredOutCount
+		});
 		fullLog?.('orbit action prepared full', {
 			mode,
-			returnedCount: noradIds.length,
-			noradCatIds: noradIds
+			returnedCount: sceneIds.length,
+			filteredOutCount,
+			requestedNoradCatIds: noradIds,
+			noradCatIds: sceneIds
 		});
 		traceEvent?.({
 			title: 'Tool result: set_orbits',
-			summary: { mode, returned_count: noradIds.length },
+			summary: { mode, returned_count: sceneIds.length, filtered_out_count: filteredOutCount },
 			details: {
 				mode,
-				returned_count: noradIds.length,
-				norad_preview: noradIds.slice(0, 50)
+				returned_count: sceneIds.length,
+				filtered_out_count: filteredOutCount,
+				requested_norad_preview: noradIds.slice(0, 50),
+				norad_preview: sceneIds.slice(0, 50)
 			}
 		});
-		return { ok: true, mode, returned_count: noradIds.length };
+		return {
+			ok: true,
+			mode,
+			returned_count: sceneIds.length,
+			filtered_out_count: filteredOutCount
+		};
 	}
 
 	if (toolName === 'set_focus') {
@@ -1599,6 +1773,12 @@ async function executeToolCall({
 				typeof rawNorad === 'number' && Number.isFinite(rawNorad) ? Math.floor(rawNorad) : null;
 			if (!noradId || noradId <= 0) {
 				return { ok: false, error: 'set_focus target=norad requires a positive norad_id.' };
+			}
+			if (!sceneUniverse.noradIdSet.has(noradId)) {
+				return {
+					ok: false,
+					error: `NORAD ${noradId} is not present in the current scene universe.`
+				};
 			}
 			focus = { target: 'norad', noradCatId: noradId };
 		}
@@ -1653,6 +1833,7 @@ export async function runAssist(
 	const db = openReadDatabase();
 	const model = env.OPENAI_ASSIST_MODEL || 'gpt-5-mini';
 	const sceneContext = normalizeSceneContext(body.sceneContext);
+	const sceneUniverse = loadSceneUniverse(db);
 	const requestId = options?.requestId ?? 'unknown';
 	const logger = createLogger('assist.executor', {
 		requestId,
@@ -1660,7 +1841,7 @@ export async function runAssist(
 	});
 	const input = buildPlannerInput(body);
 	const databaseContext = buildDatabaseContext(db);
-	const instructions = buildInstructions({ sceneContext, databaseContext });
+	const instructions = buildInstructions({ sceneContext, sceneUniverse, databaseContext });
 	const queryResults = new Map<string, QueryResultStore>();
 	const action: AssistSceneAction = {};
 	const toolHistoryLines: string[] = [];
@@ -1691,11 +1872,13 @@ export async function runAssist(
 				message_count: body.messages.length,
 				selected_norad_id: sceneContext.selectedNoradId ?? null,
 				visible_count: sceneContext.visibleCount,
+				scene_universe_count: sceneUniverse.totalCount,
 				latest_user_message: shortText(latestUserMessage, 220)
 			},
 			details: {
 				messages: body.messages,
-				scene_context: sceneContext
+				scene_context: sceneContext,
+				scene_universe_count: sceneUniverse.totalCount
 			}
 		});
 
@@ -1703,12 +1886,14 @@ export async function runAssist(
 			messageCount: input.length,
 			selectedNoradId: sceneContext.selectedNoradId,
 			visibleCount: sceneContext.visibleCount,
+			sceneUniverseCount: sceneUniverse.totalCount,
 			latestUserMessage: shortText(latestUserMessage, 180)
 		});
 		fullLog('assist tool loop started full', {
 			messageCount: input.length,
 			messages: body.messages,
 			sceneContext,
+			sceneUniverseCount: sceneUniverse.totalCount,
 			input,
 			instructions
 		});
@@ -1841,6 +2026,7 @@ export async function runAssist(
 				});
 				const output = await executeToolCall({
 					db,
+					sceneUniverse,
 					toolName: call.name,
 					toolArgs: args,
 					queryResults,
@@ -2010,14 +2196,15 @@ export async function runAssist(
 			title: 'Assist completed',
 			summary: {
 				...summarizeAction(action),
+				scene_universe_count: sceneUniverse.totalCount,
 				assistant_message_preview: shortText(assistantMessage, 180)
 			},
 			details: {
 				assistant_message: assistantMessage,
+				scene_universe_count: sceneUniverse.totalCount,
 				action: compactActionForTrace(action)
 			}
 		});
-
 		if (traceEnabled) {
 			const traceDir = path.join(process.cwd(), 'logs', 'assist');
 			const safeRequestId = requestId.replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -2031,6 +2218,7 @@ export async function runAssist(
 					requestId,
 					model,
 					sceneContext,
+					sceneUniverse,
 					messages: body.messages,
 					events: traceEvents,
 					assistantMessage,

@@ -1,3 +1,5 @@
+import Database from 'better-sqlite3';
+import path from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { createMock } = vi.hoisted(() => ({
@@ -25,6 +27,48 @@ vi.mock('$env/static/private', () => ({ OPENAI_API_KEY: 'test-key' }));
 vi.mock('$env/dynamic/private', () => ({ env: { OPENAI_ASSIST_MODEL: 'gpt-5-mini' } }));
 
 import { runAssist } from '../../src/lib/server/assist/assistant';
+
+const DB_PATH = path.join(process.cwd(), 'src/data/satellite.db');
+const OUT_OF_SCENE_NORAD = 99_999_999;
+
+function loadSceneUniverseFixture() {
+	const db = new Database(DB_PATH, { readonly: true, fileMustExist: true });
+	try {
+		const countRow = db
+			.prepare(
+				`
+					SELECT COUNT(*) AS count
+					FROM (
+						SELECT DISTINCT gp.NORAD_CAT_ID
+						FROM gp
+						JOIN satcat ON gp.NORAD_CAT_ID = satcat.NORAD_CAT_ID
+						WHERE gp.NORAD_CAT_ID IS NOT NULL
+					)
+				`
+			)
+			.get() as { count: number | string };
+		const sampleRows = db
+			.prepare(
+				`
+					SELECT DISTINCT gp.NORAD_CAT_ID AS norad_cat_id
+					FROM gp
+					JOIN satcat ON gp.NORAD_CAT_ID = satcat.NORAD_CAT_ID
+					WHERE gp.NORAD_CAT_ID IS NOT NULL
+					ORDER BY gp.NORAD_CAT_ID
+					LIMIT 500
+				`
+			)
+			.all() as Array<{ norad_cat_id: number | string }>;
+		return {
+			count: Number(countRow.count),
+			sampleNoradIds: sampleRows.map((row) => Number(row.norad_cat_id))
+		};
+	} finally {
+		db.close();
+	}
+}
+
+const SCENE_UNIVERSE = loadSceneUniverseFixture();
 
 type MockResponse = {
 	id: string;
@@ -184,7 +228,7 @@ describe('runAssist tool loop behavior', () => {
 	});
 
 	it('keeps large explicit orbit sets intact', async () => {
-		const manyIds = Array.from({ length: 400 }, (_, i) => i + 1);
+		const manyIds = SCENE_UNIVERSE.sampleNoradIds.slice(0, 400);
 		createMock
 			.mockResolvedValueOnce(
 				functionCallResponse('resp_1', [
@@ -208,6 +252,32 @@ describe('runAssist tool loop behavior', () => {
 		expect(result.action?.orbits?.mode).toBe('replace');
 		expect(result.action?.orbits?.returnedCount).toBe(400);
 		expect(result.action?.orbits?.noradCatIds).toHaveLength(400);
+		expect(createMock).toHaveBeenCalledTimes(1);
+	});
+
+	it('filters non-scene NORAD ids out of fast visibility actions', async () => {
+		createMock.mockResolvedValueOnce(
+			functionCallResponse('resp_1', [
+				{
+					name: 'set_visibility',
+					callId: 'call_visibility_filtered_1',
+					args: {
+						mode: 'replace',
+						norad_ids: [SCENE_UNIVERSE.sampleNoradIds[0], OUT_OF_SCENE_NORAD]
+					}
+				}
+			])
+		);
+
+		const result = await runAssist({
+			messages: [{ role: 'user', content: 'show this specific mix' }]
+		});
+
+		expect(result.action?.visibility?.mode).toBe('replace');
+		expect(result.action?.visibility?.returnedCount).toBe(1);
+		expect(result.action?.visibility?.noradCatIds).toEqual([SCENE_UNIVERSE.sampleNoradIds[0]]);
+		expect(result.assistantMessage).toContain('Applied visibility mode replace to 1 objects.');
+		expect(result.historyMessages?.[0]?.content).toContain('filtered_out_count=1');
 		expect(createMock).toHaveBeenCalledTimes(1);
 	});
 
