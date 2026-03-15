@@ -208,15 +208,6 @@ const assertSceneRuntimeSupport = () => {
 	}
 };
 
-const createModuleWorker = (path: string, label: string) => {
-	try {
-		return new Worker(new URL(path, import.meta.url), { type: 'module' });
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		throw new Error(`Failed to start ${label} worker: ${message}`);
-	}
-};
-
 export const createScene = async (
 	el: HTMLCanvasElement,
 	satellites: SceneDataRow[],
@@ -334,7 +325,8 @@ export const createScene = async (
 		Math.min(4, Math.floor((navigator.hardwareConcurrency ?? 4) / 2) || 1)
 	);
 	const satelliteWorkers = Array.from({ length: workerCount }, () => {
-		return createModuleWorker('./satelliteWorker.js', 'satellite');
+		// Keep worker construction inline so Vite emits the hashed worker asset.
+		return new Worker(new URL('./satelliteWorker.js', import.meta.url), { type: 'module' });
 	});
 	const overlayUpdateIntervalMs = 180;
 	const workerStatsFreshMs = 2200;
@@ -450,7 +442,9 @@ export const createScene = async (
 		motionDebugOverlay = undefined;
 	}
 
-	const orbitWorker = createModuleWorker('./orbitWorker.js', 'orbit');
+	const orbitWorker = new Worker(new URL('./orbitWorker.js', import.meta.url), {
+		type: 'module'
+	});
 
 	orbitWorker.postMessage({ type: 'init', satelliteData });
 
