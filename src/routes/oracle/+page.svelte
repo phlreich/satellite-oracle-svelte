@@ -192,6 +192,7 @@
 	const THINKING_ERASE_INTERVAL_MS = 45;
 	const FALLBACK_CURSOR_BLINK_MS = 800;
 	let isMobileView = false;
+	let sceneInitError = '';
 
 	function getCursorBlinkDurationMs() {
 		const rawValue = getComputedStyle(document.documentElement)
@@ -375,11 +376,25 @@
 		return payload as SceneDataRow[];
 	}
 
+	function getSceneInitErrorMessage(error: unknown) {
+		const rawMessage = error instanceof Error ? error.message : String(error);
+		const normalizedMessage = rawMessage.toLowerCase();
+		if (
+			normalizedMessage.includes('sharedarraybuffer') ||
+			normalizedMessage.includes('cross-origin isolation') ||
+			normalizedMessage.includes('worker')
+		) {
+			return 'This browser could not start the 3D scene because required browser features were unavailable.';
+		}
+		return 'The 3D scene failed to initialize. Please reload and try again.';
+	}
+
 	onMount(() => {
 		const userAgent = window.navigator.userAgent;
 		isMobileView = isMobile(userAgent);
 		(async () => {
 			try {
+				sceneInitError = '';
 				const sceneData = await loadSceneData();
 				const sceneController = await createScene(el, sceneData, selectedSatellite, sharedData);
 				cleanup = sceneController.cleanup;
@@ -390,6 +405,7 @@
 				focusVisibleNoradId = sceneController.focusVisibleNoradId;
 				applyOrbitOverlay = sceneController.applyOrbitOverlay;
 			} catch (error) {
+				sceneInitError = getSceneInitErrorMessage(error);
 				console.error('Error initializing scene:', error);
 			} finally {
 				hideLoadingScreen();
@@ -577,6 +593,15 @@
 
 <canvas bind:this={el}></canvas>
 
+{#if sceneInitError}
+	<div class="scene-error" role="alert">
+		<div class="scene-error-card">
+			<h2>Scene unavailable</h2>
+			<p>{sceneInitError}</p>
+		</div>
+	</div>
+{/if}
+
 <!-- Floating info panel for selected satellite -->
 <!-- svelte-ignore a11y-click-events-have-key-events -->
 <!-- svelte-ignore a11y-no-static-element-interactions -->
@@ -647,6 +672,42 @@
 	textarea {
 		resize: none;
 		font-family: inherit;
+	}
+
+	.scene-error {
+		position: fixed;
+		inset: 0;
+		z-index: 100000;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: 24px;
+		box-sizing: border-box;
+		background: rgba(0, 0, 0, 0.72);
+	}
+
+	.scene-error-card {
+		max-width: 520px;
+		padding: 18px 20px;
+		border: 1px solid rgba(255, 255, 255, 0.5);
+		background: rgba(0, 0, 0, 0.94);
+		color: white;
+		box-shadow: 0 0 24px rgba(0, 0, 0, 0.4);
+	}
+
+	.scene-error-card h2 {
+		margin: 0 0 10px 0;
+		font-size: 1.05rem;
+		font-weight: normal;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+	}
+
+	.scene-error-card p {
+		margin: 0;
+		font-size: 0.9rem;
+		line-height: 1.6;
+		color: rgba(255, 255, 255, 0.78);
 	}
 
 	.chat-window {

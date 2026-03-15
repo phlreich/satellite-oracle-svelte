@@ -165,14 +165,7 @@ const satelliteMaterial = new THREE.ShaderMaterial({
 	fragmentShader: fragmentShader
 });
 
-// axes helper
-// const axesHelper = new THREE.AxesHelper(10000);
-// scene.add(axesHelper);
-
 const stats = new Stats();
-if (import.meta.env.DEV) {
-	document.body.appendChild(stats.dom);
-}
 
 const fitEarthInView = () => {
 	if (!(camera instanceof THREE.PerspectiveCamera)) {
@@ -199,21 +192,63 @@ const resize = () => {
 	fitEarthInView();
 };
 
+const assertSceneRuntimeSupport = () => {
+	const missingFeatures: string[] = [];
+	if (typeof SharedArrayBuffer === 'undefined') {
+		missingFeatures.push('SharedArrayBuffer');
+	}
+	if (!window.crossOriginIsolated) {
+		missingFeatures.push('cross-origin isolation');
+	}
+	if (typeof Worker === 'undefined') {
+		missingFeatures.push('Web Workers');
+	}
+	if (missingFeatures.length > 0) {
+		throw new Error(`Missing required scene features: ${missingFeatures.join(', ')}.`);
+	}
+};
+
+const createModuleWorker = (path: string, label: string) => {
+	try {
+		return new Worker(new URL(path, import.meta.url), { type: 'module' });
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		throw new Error(`Failed to start ${label} worker: ${message}`);
+	}
+};
+
 export const createScene = async (
 	el: HTMLCanvasElement,
 	satellites: SceneDataRow[],
 	selectedSatellite: Writable<SelectedSatelliteState>,
 	sharedData: Writable<SharedSceneData>
 ): Promise<SceneController> => {
+	assertSceneRuntimeSupport();
+
 	const raycaster = new THREE.Raycaster();
 	raycaster.params.Points = { threshold: 20 };
 	const mouse = new THREE.Vector2();
+	const showSceneDebug =
+		import.meta.env.DEV || new URLSearchParams(window.location.search).has('debug');
+	const showMotionDebugOverlay = showSceneDebug;
 
 	let hoveredSatelliteIndex: number | undefined;
 	renderer = new THREE.WebGLRenderer({ antialias: true, canvas: el });
 	const controls = new OrbitControls(camera, renderer.domElement);
 	controls.enableDamping = true;
 	controls.dampingFactor = 0.1;
+	let axesHelper: THREE.AxesHelper | undefined;
+	if (showSceneDebug) {
+		stats.dom.style.position = 'fixed';
+		stats.dom.style.left = '8px';
+		stats.dom.style.top = '8px';
+		stats.dom.style.zIndex = '100001';
+		if (!stats.dom.isConnected) {
+			document.body.appendChild(stats.dom);
+		}
+		axesHelper = new THREE.AxesHelper(10000);
+		scene.add(axesHelper);
+	}
 
 	// Optional: Adjust these for how fast the user can zoom/pan
 	controls.zoomSpeed = 0.8;
@@ -299,10 +334,8 @@ export const createScene = async (
 		Math.min(4, Math.floor((navigator.hardwareConcurrency ?? 4) / 2) || 1)
 	);
 	const satelliteWorkers = Array.from({ length: workerCount }, () => {
-		return new Worker(new URL('./satelliteWorker.js', import.meta.url), { type: 'module' });
+		return createModuleWorker('./satelliteWorker.js', 'satellite');
 	});
-	const showMotionDebugOverlay =
-		import.meta.env.DEV || new URLSearchParams(window.location.search).has('debugMotion');
 	const overlayUpdateIntervalMs = 180;
 	const workerStatsFreshMs = 2200;
 	let motionDebugOverlay: HTMLPreElement | undefined;
@@ -417,7 +450,7 @@ export const createScene = async (
 		motionDebugOverlay = undefined;
 	}
 
-	const orbitWorker = new Worker(new URL('./orbitWorker.js', import.meta.url), { type: 'module' });
+	const orbitWorker = createModuleWorker('./orbitWorker.js', 'orbit');
 
 	orbitWorker.postMessage({ type: 'init', satelliteData });
 
@@ -1241,7 +1274,7 @@ export const createScene = async (
 
 	const animate = () => {
 		const onAnimationFrame = async () => {
-			if (import.meta.env.DEV) {
+			if (showSceneDebug) {
 				stats.update();
 			}
 			const currentTime = new Date().getTime();
@@ -1318,6 +1351,13 @@ export const createScene = async (
 			unsubscribeSharedData();
 			document.removeEventListener('visibilitychange', handleVisibilityChange);
 			removeMotionDebugOverlay();
+			if (stats.dom.isConnected) {
+				stats.dom.remove();
+			}
+			if (axesHelper) {
+				scene.remove(axesHelper);
+				axesHelper = undefined;
+			}
 			window.removeEventListener('resize', resize);
 			window.removeEventListener('mousemove', updateMouseCoordinates);
 			window.removeEventListener('mousedown', onMouseDown);

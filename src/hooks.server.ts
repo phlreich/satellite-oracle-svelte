@@ -39,7 +39,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 	try {
 		const response = await resolve(event);
 		response.headers.set('Cross-Origin-Opener-Policy', 'same-origin');
-		response.headers.set('Cross-Origin-Embedder-Policy', 'credentialless');
+		response.headers.set('Cross-Origin-Embedder-Policy', 'require-corp');
 		response.headers.set('Cross-Origin-Resource-Policy', 'same-origin');
 		response.headers.set('x-request-id', requestId);
 		if (shouldLogRequest(path)) {
