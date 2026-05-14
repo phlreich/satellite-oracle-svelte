@@ -60,7 +60,3 @@ The application includes a chat interface that allows you to filter and interact
 - "Show me all objects launched by NASA in 2020"
 
 This will filter the displayed objects to only those that match your query, providing a powerful tool for exploring the data.
-
-//TODO
-
-- add the moon
