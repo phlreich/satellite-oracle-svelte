@@ -30,24 +30,19 @@ The skies are busy, we prosper.
 
 The application should now be running and accessible through your web browser.
 
-## Raspberry Pi deployment (Docker + Cloudflare Tunnel)
+## Deployment
 
-1. Ensure your `.env` file contains the existing credentials plus:
-   - `CLOUDFLARED_TUNNEL_TOKEN` – generated in the Cloudflare Zero Trust dashboard
-   - (optional) `APP_BASE_PATH` – override if `/satellite-oracle` is not desired.
-2. `docker compose build --pull`
-3. `docker compose up -d`
-4. Point the Cloudflare tunnel hostname `phlreich.com` at the tunnel and origin service `http://localhost:80`.
+This repo is just the app. The production deployment for **phlreich.com** — nginx +
+Cloudflare Tunnel, with this app proxied at `/satellite-oracle` alongside other projects
+— lives in the private **[phlreich-site](https://github.com/phlreich/phlreich-site)** repo,
+which pulls this repo in as a git submodule.
 
-### What the stack looks like
+The app is built to live under the `/satellite-oracle` base path. Traffic to the legacy
+`satellite-oracle.com` host redirects to `https://phlreich.com/satellite-oracle`.
 
-- `app` – the SvelteKit server is now aware that it lives at `/satellite-oracle`, so assets and API calls resolve correctly underneath that prefix.
-- `nginx` – serves the lightweight landing page for `phlreich.com` from `webroot/phlreich` and proxies `/satellite-oracle/*` back to the Svelte app.
-- `cloudflared` – runs alongside `nginx`, terminating TLS at Cloudflare so no origin certificates are required. If you need end-to-end TLS you can swap in a Certbot container and mount generated certs into nginx.
-
-Traffic to the legacy `satellite-oracle.com` host is automatically redirected to `https://phlreich.com/satellite-oracle`.
-
-Customize the landing page by editing the files under `webroot/phlreich`.
+> Note: the build inlines `OPENAI_API_KEY` (and other `$env/static/private` vars) at
+> build time, so a populated `.env` must be present in the build context when the image
+> is built.
 
 ## Application Overview
 
