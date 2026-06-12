@@ -1,5 +1,15 @@
 # satellite-oracle-svelte/.dockerignore
-src/data/*.db
-src/data/*.db-shm
-src/data/*.db-wal
+.env
+.env.*
+.git
+.svelte-kit
+build
+coverage
+dist
+docs
+logs
 node_modules
+notes
+tests
+webroot
+src/data/*

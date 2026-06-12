@@ -23,8 +23,9 @@ vi.mock('openai', () => {
 	};
 });
 
-vi.mock('$env/static/private', () => ({ OPENAI_API_KEY: 'test-key' }));
-vi.mock('$env/dynamic/private', () => ({ env: { OPENAI_ASSIST_MODEL: 'gpt-5-mini' } }));
+vi.mock('$env/dynamic/private', () => ({
+	env: { OPENAI_API_KEY: 'test-key', OPENAI_ASSIST_MODEL: 'gpt-5-mini' }
+}));
 
 import { runAssist } from '../../src/lib/server/assist/assistant';
 

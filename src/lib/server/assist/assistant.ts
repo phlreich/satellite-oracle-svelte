@@ -10,9 +10,6 @@ import type {
 } from 'openai/resources/responses/responses';
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
-import { OPENAI_API_KEY } from '$env/static/private';
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore
 import { env } from '$env/dynamic/private';
 import { createLogger, serializeError } from '$lib/server/logger';
 import { guardReadOnlySql } from '$lib/server/assist/sqlGuard';
@@ -1829,7 +1826,14 @@ export async function runAssist(
 	body: AssistRequestBody,
 	options?: { requestId?: string }
 ): Promise<AssistResponse> {
-	const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+	const openaiApiKey =
+		typeof env.OPENAI_API_KEY === 'string' && env.OPENAI_API_KEY.trim() !== ''
+			? env.OPENAI_API_KEY
+			: null;
+	if (!openaiApiKey) {
+		throw new Error('OPENAI_API_KEY is not configured.');
+	}
+	const openai = new OpenAI({ apiKey: openaiApiKey });
 	const db = openReadDatabase();
 	const model = env.OPENAI_ASSIST_MODEL || 'gpt-5-mini';
 	const sceneContext = normalizeSceneContext(body.sceneContext);
