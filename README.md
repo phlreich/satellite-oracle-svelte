@@ -55,3 +55,24 @@ The application includes a chat interface that allows you to filter and interact
 - "Show me all objects launched by NASA in 2020"
 
 This will filter the displayed objects to only those that match your query, providing a powerful tool for exploring the data.
+
+## Operations (self-hosting)
+
+Two optional systemd installers ship in `scripts/` for headless (e.g. Raspberry Pi) deployments:
+
+- `./scripts/install-logger.sh` — system-level timer that writes Docker container CPU/IO
+  stats plus host metrics (`uptime`, `df -h`, `free -h`, `docker system df`, top processes,
+  …) to `logs/docker-stats-YYYY-MM-DD.log` every minute. Configurable via `LOGGER_SCRIPT`,
+  `LOG_DIR`, `UNIT_NAME` env vars.
+- `./scripts/install-cloudflared-watchdog.sh` — checks cloudflared liveness via its
+  Prometheus metrics (`cloudflared_tunnel_ha_connections` at `http://127.0.0.1:20241/metrics`)
+  and restarts `nginx` + `cloudflared` if HA connections stay below threshold.
+
+Both require `systemd`/`systemctl` (use `sudo`), install under `/etc/systemd/system`, and are
+verifiable with `systemctl status <unit>.timer` / `journalctl -u <unit>.service`. Disable with
+`systemctl disable --now <unit>.timer` and remove the unit files.
+
+## Architecture & design
+
+See [`DESIGN.md`](./DESIGN.md) for the architecture map, AI-assist runtime, scene/UI behavior,
+visual design language, dev/ops reference, known issues, and the manual test-query corpus.
