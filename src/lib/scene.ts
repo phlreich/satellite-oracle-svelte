@@ -3,7 +3,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { twoline2satrec, gstime, geodeticToEcf, ecfToEci } from 'satellite.js';
 import Stats from 'three/examples/jsm/libs/stats.module.js';
 import type { Writable } from 'svelte/store';
-import { base } from '$app/paths';
+import earthTextureUrl from '$lib/assets/earth.webp';
 
 type SceneDataRow = [string, string, string, number, string];
 type QueryResultRow = { NORAD_CAT_ID: number };
@@ -119,7 +119,7 @@ const initialMaterial = new THREE.MeshBasicMaterial({ color: 0x005f9a });
 const earthMesh = new THREE.Mesh(earthGeometry, initialMaterial);
 scene.add(earthMesh);
 const textureLoader = new THREE.TextureLoader();
-textureLoader.load(`${base}/earth.webp`, (texture) => {
+textureLoader.load(earthTextureUrl, (texture) => {
 	texture.colorSpace = THREE.SRGBColorSpace;
 	earthMesh.material = new THREE.MeshBasicMaterial({ map: texture });
 	earthMesh.material.needsUpdate = true;
