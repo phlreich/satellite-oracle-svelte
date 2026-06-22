@@ -17,6 +17,10 @@ const DB_NEXT_PATH = path.join(process.cwd(), 'src/data/satellite.next.db');
 const DB_PREV_PATH = path.join(process.cwd(), 'src/data/satellite.prev.db');
 const SCENE_DATA_PATH = path.join(process.cwd(), 'src/data/scene-data.json');
 const SCENE_DATA_GZIP_PATH = `${SCENE_DATA_PATH}.gz`;
+const SCENE_DATA_NDJSON_PATH = path.join(process.cwd(), 'src/data/scene-data.ndjson');
+const SCENE_DATA_NDJSON_GZIP_PATH = `${SCENE_DATA_NDJSON_PATH}.gz`;
+const SCENE_DATA_META_PATH = path.join(process.cwd(), 'src/data/scene-meta.json');
+const SCENE_DATA_META_GZIP_PATH = `${SCENE_DATA_META_PATH}.gz`;
 const gzipAsync = promisify(gzip);
 const dbLogger = createLogger('db.maintenance');
 
@@ -64,9 +68,9 @@ function seedDiscosSnapshotFromLiveDatabase(targetDb: Database.Database) {
 			sourceDb.prepare('SELECT COUNT(*) AS count FROM discos_objects').get() as { count: number }
 		).count;
 		const entityCount = (
-			sourceDb
-				.prepare('SELECT COUNT(*) AS count FROM discos_object_entities')
-				.get() as { count: number }
+			sourceDb.prepare('SELECT COUNT(*) AS count FROM discos_object_entities').get() as {
+				count: number;
+			}
 		).count;
 
 		if (objectCount === 0 && entityCount === 0) {
@@ -491,9 +495,9 @@ interface SatelliteRow {
 	OBJECT_NAME: string;
 }
 
-export async function getSceneData(
-	dbPath = DB_PATH
-): Promise<Array<[string, string, string, number, string]>> {
+type SceneDataTuple = [string, string, string, number, string];
+
+export async function getSceneData(dbPath = DB_PATH): Promise<SceneDataTuple[]> {
 	const db = new Database(dbPath, { readonly: true, fileMustExist: true });
 	try {
 		const sql = `
@@ -513,21 +517,50 @@ export async function getSceneData(
 	}
 }
 
-async function writeSceneDataArtifacts(sceneData: Array<[string, string, string, number, string]>) {
+async function writeSceneDataArtifacts(sceneData: SceneDataTuple[]) {
 	const json = JSON.stringify(sceneData);
+	const ndjson = sceneData.map((row) => JSON.stringify(row)).join('\n') + '\n';
+	const meta = JSON.stringify({
+		count: sceneData.length,
+		rowFormat: ['epoch', 'tleLine1', 'tleLine2', 'noradCatId', 'objectName'],
+		artifacts: {
+			json: 'scene-data.json',
+			ndjson: 'scene-data.ndjson'
+		},
+		updatedAt: new Date().toISOString()
+	});
 	const gzipBuffer = await gzipAsync(json, { level: 9 });
+	const ndjsonGzipBuffer = await gzipAsync(ndjson, { level: 9 });
+	const metaGzipBuffer = await gzipAsync(meta, { level: 9 });
 	const tmpSceneDataPath = `${SCENE_DATA_PATH}.tmp`;
 	const tmpSceneDataGzipPath = `${SCENE_DATA_GZIP_PATH}.tmp`;
+	const tmpSceneDataNdjsonPath = `${SCENE_DATA_NDJSON_PATH}.tmp`;
+	const tmpSceneDataNdjsonGzipPath = `${SCENE_DATA_NDJSON_GZIP_PATH}.tmp`;
+	const tmpSceneDataMetaPath = `${SCENE_DATA_META_PATH}.tmp`;
+	const tmpSceneDataMetaGzipPath = `${SCENE_DATA_META_GZIP_PATH}.tmp`;
 
 	await fs.writeFile(tmpSceneDataPath, json, 'utf8');
 	await fs.writeFile(tmpSceneDataGzipPath, gzipBuffer);
+	await fs.writeFile(tmpSceneDataNdjsonPath, ndjson, 'utf8');
+	await fs.writeFile(tmpSceneDataNdjsonGzipPath, ndjsonGzipBuffer);
+	await fs.writeFile(tmpSceneDataMetaPath, meta, 'utf8');
+	await fs.writeFile(tmpSceneDataMetaGzipPath, metaGzipBuffer);
 	await fs.rename(tmpSceneDataPath, SCENE_DATA_PATH);
 	await fs.rename(tmpSceneDataGzipPath, SCENE_DATA_GZIP_PATH);
+	await fs.rename(tmpSceneDataNdjsonPath, SCENE_DATA_NDJSON_PATH);
+	await fs.rename(tmpSceneDataNdjsonGzipPath, SCENE_DATA_NDJSON_GZIP_PATH);
+	await fs.rename(tmpSceneDataMetaPath, SCENE_DATA_META_PATH);
+	await fs.rename(tmpSceneDataMetaGzipPath, SCENE_DATA_META_GZIP_PATH);
 	dbLogger.info('scene-data artifacts updated', {
 		sceneDataPath: SCENE_DATA_PATH,
 		sceneDataKb: Math.round(json.length / 1024),
 		sceneDataGzipPath: SCENE_DATA_GZIP_PATH,
-		sceneDataGzipKb: Math.round(gzipBuffer.length / 1024)
+		sceneDataGzipKb: Math.round(gzipBuffer.length / 1024),
+		sceneDataNdjsonPath: SCENE_DATA_NDJSON_PATH,
+		sceneDataNdjsonKb: Math.round(ndjson.length / 1024),
+		sceneDataNdjsonGzipPath: SCENE_DATA_NDJSON_GZIP_PATH,
+		sceneDataNdjsonGzipKb: Math.round(ndjsonGzipBuffer.length / 1024),
+		sceneDataMetaPath: SCENE_DATA_META_PATH
 	});
 }
 

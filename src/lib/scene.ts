@@ -56,9 +56,15 @@ type SelectedSatelliteState = {
 	satrec?: unknown;
 } | null;
 type TextureReadyResult = 'loaded' | 'failed' | 'timeout';
+type SatelliteStreamController = {
+	appendRows: (rows: SceneDataRow[]) => void;
+	finish: () => void;
+	abort: () => void;
+};
 type SceneController = {
 	textureReady: Promise<TextureReadyResult>;
 	loadSatellites: (satellites: SceneDataRow[]) => Promise<void>;
+	startSatelliteStream: (totalCount: number) => SatelliteStreamController;
 	cleanup: () => void;
 	focusPreviousVisibleSatellite: () => void;
 	focusNextVisibleSatellite: () => void;
@@ -295,14 +301,34 @@ export const createScene = (
 	let focusVisibleNoradIdImpl: (noradCatId: number) => boolean = () => false;
 	let applyOrbitOverlayImpl: (noradCatIds: number[], mode: OrbitOverlayMode) => void = () => {};
 
-	const loadSatellites = async (satellites: SceneDataRow[]) => {
+	const createNoopSatelliteStreamController = (): SatelliteStreamController => ({
+		appendRows: () => {},
+		finish: () => {},
+		abort: () => {}
+	});
+
+	const resetSatelliteControllerDelegates = () => {
+		satelliteFrameUpdate = () => {};
+		cleanupSatellites = () => {};
+		focusPreviousVisibleSatelliteImpl = () => {};
+		focusNextVisibleSatelliteImpl = () => {};
+		getVisibleCountImpl = () => 0;
+		focusEarthImpl = () => false;
+		focusVisibleNoradIdImpl = () => false;
+		applyOrbitOverlayImpl = () => {};
+	};
+
+	const startSatelliteStream = (totalCount: number): SatelliteStreamController => {
 		if (disposed || satellitesLoaded) {
-			return;
+			return createNoopSatelliteStreamController();
+		}
+		if (!Number.isInteger(totalCount) || totalCount < 0) {
+			throw new Error(`Invalid satellite stream count: ${totalCount}`);
 		}
 		satellitesLoaded = true;
 
 		// initialize satellite positions
-		const N = satellites.length;
+		const N = totalCount;
 		const sharedBufferPreviousPositions = new SharedArrayBuffer(
 			N * 3 * Float32Array.BYTES_PER_ELEMENT
 		);
@@ -336,6 +362,10 @@ export const createScene = (
 		const computeVisibility = new Uint8Array(sharedBufferComputeVisibility);
 		const renderReady = new Uint8Array(N);
 		const renderVisible = new Uint8Array(N);
+		let loadedCount = 0;
+		let streamFinished = false;
+		let defaultComputeVisibility = 1;
+		const explicitComputeVisibilityByNoradId = new Map<number, 0 | 1>();
 
 		const colors = new Float32Array(N * 3); // three components per color
 		const sizes = new Float32Array(N); // one component per size
@@ -346,17 +376,11 @@ export const createScene = (
 			sizes[i] = 2000; // size
 		}
 
-		// Compute every loaded object by default, but draw only after a worker has produced a sample.
-		computeVisibility.fill(1);
-
-		const satelliteData: SceneSatellite[] = satellites.map((sat: SceneDataRow) => {
-			const [, tleLine1, tleLine2, norad_cat_id] = sat;
-			return { tleLine1, tleLine2, norad_cat_id };
-		});
+		const satelliteRows: SceneDataRow[] = new Array(N);
+		const satelliteData: SceneSatellite[] = new Array(N);
 		const satelliteIndexByNoradId = new Map<number, number>();
-		for (let i = 0; i < satelliteData.length; i++) {
-			satelliteIndexByNoradId.set(satelliteData[i].norad_cat_id, i);
-		}
+		const getComputeVisibilityForNoradId = (noradCatId: number) =>
+			explicitComputeVisibilityByNoradId.get(noradCatId) ?? defaultComputeVisibility;
 		const getSatelliteSatrec = (index: number) => {
 			const satellite = satelliteData[index];
 			if (!satellite) {
@@ -500,7 +524,7 @@ export const createScene = (
 			type: 'module'
 		});
 
-		orbitWorker.postMessage({ type: 'init', satelliteData });
+		orbitWorker.postMessage({ type: 'init', satelliteData, capacity: N });
 
 		const focusOrbitSampleCount = 720;
 		const overlayOrbitSampleCount = 72;
@@ -911,7 +935,7 @@ export const createScene = (
 		const refreshRenderVisibility = () => {
 			const visibleIndices: number[] = [];
 			let changed = false;
-			for (let i = 0; i < N; i++) {
+			for (let i = 0; i < loadedCount; i++) {
 				if (renderReady[i] === 0 && satelliteCurrentUpdateTimes[i] > 0) {
 					renderReady[i] = 1;
 				}
@@ -932,7 +956,7 @@ export const createScene = (
 
 		const assignComputeIndices = () => {
 			const computeIndices: number[] = [];
-			for (let i = 0; i < N; i++) {
+			for (let i = 0; i < loadedCount; i++) {
 				if (computeVisibility[i] > 0) {
 					computeIndices.push(i);
 				}
@@ -971,6 +995,7 @@ export const createScene = (
 				currentSatelliteVelocities: satelliteCurrentVelocities,
 				currentSatelliteUpdateTimes: satelliteCurrentUpdateTimes,
 				satelliteData,
+				capacity: N,
 				computeVisibility,
 				workerId: workerIndex
 			});
@@ -999,10 +1024,50 @@ export const createScene = (
 		geometry.setAttribute('customColor', new THREE.BufferAttribute(colors, 3));
 		geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
 		geometry.setAttribute('visibility', new THREE.BufferAttribute(renderVisible, 1));
+		geometry.setDrawRange(0, 0);
 		geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), controls.maxDistance);
 		const points = new THREE.Points(geometry, satelliteMaterial);
 		points.renderOrder = 2;
 		scene.add(points);
+
+		const appendRows = (rows: SceneDataRow[]) => {
+			if (streamFinished || rows.length === 0) {
+				return;
+			}
+			if (loadedCount + rows.length > N) {
+				throw new Error(
+					`Scene stream exceeded declared count: ${loadedCount + rows.length} > ${N}`
+				);
+			}
+			const startIndex = loadedCount;
+			const newSatelliteData: SceneSatellite[] = [];
+			for (const row of rows) {
+				const [, tleLine1, tleLine2, norad_cat_id] = row;
+				const satelliteIndex = loadedCount;
+				const satellite = { tleLine1, tleLine2, norad_cat_id };
+				satelliteRows[satelliteIndex] = row;
+				satelliteData[satelliteIndex] = satellite;
+				satelliteIndexByNoradId.set(norad_cat_id, satelliteIndex);
+				computeVisibility[satelliteIndex] = getComputeVisibilityForNoradId(norad_cat_id);
+				newSatelliteData.push(satellite);
+				loadedCount += 1;
+			}
+			for (const worker of satelliteWorkers) {
+				worker.postMessage({
+					type: 'add-satellites',
+					startIndex,
+					satelliteData: newSatelliteData
+				});
+			}
+			orbitWorker.postMessage({
+				type: 'add-satellites',
+				startIndex,
+				satelliteData: newSatelliteData
+			});
+			geometry.setDrawRange(0, loadedCount);
+			assignComputeIndices();
+			refreshRenderVisibility();
+		};
 
 		function drawOrbit(satelliteIndex: number) {
 			startOrbitTracking(satelliteIndex);
@@ -1162,9 +1227,10 @@ export const createScene = (
 			trackTarget = undefined;
 			previousSatellitePosition = undefined;
 			clearSelectedSatelliteHighlight();
+			const satelliteRow = satelliteRows[index];
 			selectedSatellite.set({
-				name: satellites[index].slice(-1)[0] + ' NORAD ID: ' + satelliteData[index].norad_cat_id,
-				details: satellites[index][1] + '\n' + satellites[index][2],
+				name: satelliteRow.slice(-1)[0] + ' NORAD ID: ' + satelliteData[index].norad_cat_id,
+				details: satelliteRow[1] + '\n' + satelliteRow[2],
 				noradCatId: satelliteData[index].norad_cat_id,
 				index: index,
 				satrec: getSatelliteSatrec(index)
@@ -1299,28 +1365,35 @@ export const createScene = (
 			}
 			const selectedNoradIds = new Set(data[0].map((item: QueryResultRow) => item.NORAD_CAT_ID));
 			if (data[1] === 'replace') {
-				for (let i = 0; i < N; i++) {
+				defaultComputeVisibility = 0;
+				explicitComputeVisibilityByNoradId.clear();
+				for (const noradID of selectedNoradIds) {
+					explicitComputeVisibilityByNoradId.set(noradID, 1);
+				}
+				for (let i = 0; i < loadedCount; i++) {
 					const noradID = satelliteData[i].norad_cat_id;
-					if (selectedNoradIds.has(noradID)) {
-						computeVisibility[i] = 1.0;
-					} else {
-						computeVisibility[i] = 0.0;
-					}
+					computeVisibility[i] = getComputeVisibilityForNoradId(noradID);
 				}
 				refreshRenderVisibility();
 			} else if (data[1] === 'add') {
-				for (let i = 0; i < N; i++) {
+				for (const noradID of selectedNoradIds) {
+					explicitComputeVisibilityByNoradId.set(noradID, 1);
+				}
+				for (let i = 0; i < loadedCount; i++) {
 					const noradID = satelliteData[i].norad_cat_id;
 					if (selectedNoradIds.has(noradID)) {
-						computeVisibility[i] = 1.0;
+						computeVisibility[i] = 1;
 					}
 				}
 				refreshRenderVisibility();
 			} else if (data[1] === 'remove') {
-				for (let i = 0; i < N; i++) {
+				for (const noradID of selectedNoradIds) {
+					explicitComputeVisibilityByNoradId.set(noradID, 0);
+				}
+				for (let i = 0; i < loadedCount; i++) {
 					const noradID = satelliteData[i].norad_cat_id;
 					if (selectedNoradIds.has(noradID)) {
-						computeVisibility[i] = 0.0;
+						computeVisibility[i] = 0;
 					}
 				}
 				refreshRenderVisibility();
@@ -1401,6 +1474,9 @@ export const createScene = (
 			window.removeEventListener('click', onClick);
 			renderer.domElement.removeEventListener('mouseenter', onCanvasMouseEnter);
 			renderer.domElement.removeEventListener('mouseleave', onCanvasMouseLeave);
+			removeVerticalLine();
+			scene.remove(points);
+			geometry.dispose();
 		};
 		focusPreviousVisibleSatelliteImpl = () => selectRelativeVisibleSatellite(-1);
 		focusNextVisibleSatelliteImpl = () => selectRelativeVisibleSatellite(1);
@@ -1408,6 +1484,34 @@ export const createScene = (
 		focusEarthImpl = focusEarth;
 		focusVisibleNoradIdImpl = focusVisibleNoradId;
 		applyOrbitOverlayImpl = applyOrbitOverlay;
+
+		const finish = () => {
+			streamFinished = true;
+			if (loadedCount !== N) {
+				console.warn('Scene stream ended before declared satellite count was reached.', {
+					loadedCount,
+					expectedCount: N
+				});
+			}
+			assignComputeIndices();
+			refreshRenderVisibility();
+		};
+
+		const abort = () => {
+			cleanupSatellites();
+			if (!disposed) {
+				satellitesLoaded = false;
+				resetSatelliteControllerDelegates();
+			}
+		};
+
+		return { appendRows, finish, abort };
+	};
+
+	const loadSatellites = async (satellites: SceneDataRow[]) => {
+		const stream = startSatelliteStream(satellites.length);
+		stream.appendRows(satellites);
+		stream.finish();
 	};
 
 	const animate = () => {
@@ -1433,6 +1537,7 @@ export const createScene = (
 	return {
 		textureReady,
 		loadSatellites,
+		startSatelliteStream,
 		cleanup: () => {
 			disposed = true;
 			cancelAnimationFrame(animationFrameId);

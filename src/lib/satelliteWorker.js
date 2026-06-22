@@ -131,13 +131,31 @@ onmessage = (event) => {
 		currentSatellitePositions = event.data.currentSatellitePositions;
 		currentSatelliteVelocities = event.data.currentSatelliteVelocities;
 		currentSatelliteUpdateTimes = event.data.currentSatelliteUpdateTimes;
-		satelliteData = event.data.satelliteData;
+		const capacity = Number(event.data.capacity);
+		satelliteData = Array.isArray(event.data.satelliteData)
+			? event.data.satelliteData
+			: new Array(Number.isFinite(capacity) ? capacity : 0);
 		computeVisibility = event.data.computeVisibility ?? event.data.visibility;
 		const receivedWorkerId = Number(event.data.workerId);
 		workerId = Number.isFinite(receivedWorkerId) ? receivedWorkerId : -1;
 		if (!isRunning) {
 			isRunning = true;
 			runLoop();
+		}
+		return;
+	}
+
+	if (event.data?.type === 'add-satellites') {
+		if (!satelliteData) {
+			return;
+		}
+		const startIndex = Number(event.data.startIndex);
+		const rows = Array.isArray(event.data.satelliteData) ? event.data.satelliteData : [];
+		if (!Number.isInteger(startIndex) || startIndex < 0) {
+			return;
+		}
+		for (let offset = 0; offset < rows.length; offset++) {
+			satelliteData[startIndex + offset] = rows[offset];
 		}
 		return;
 	}

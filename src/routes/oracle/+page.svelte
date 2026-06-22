@@ -84,6 +84,7 @@
 
 	let messageContainer: HTMLElement;
 	let latLongIntervalId: number | undefined;
+	let sceneDataAbortController: AbortController | undefined;
 
 	let el: HTMLCanvasElement;
 	let cleanup: (() => void) | undefined;
@@ -102,6 +103,10 @@
 	type SharedSceneIntent = 'replace' | 'add' | 'remove';
 	type SharedSceneData = [Array<{ NORAD_CAT_ID: number }>, SharedSceneIntent] | [];
 	type SceneDataRow = [string, string, string, number, string];
+	type SceneController = ReturnType<typeof createScene>;
+	type SceneMetadata = {
+		count: number;
+	};
 	type AssistResponseBody = {
 		assistantMessage: string;
 		historyMessages?: Array<{
@@ -363,8 +368,25 @@
 		}
 	}
 
-	async function loadSceneData(): Promise<SceneDataRow[]> {
-		const response = await fetch(`${base}/data/scene-data.json`);
+	function parseSceneDataRow(payload: unknown, context: string): SceneDataRow {
+		if (!Array.isArray(payload) || payload.length !== 5) {
+			throw new Error(`Invalid scene data row at ${context}`);
+		}
+		const [epoch, tleLine1, tleLine2, noradCatId, objectName] = payload;
+		if (
+			typeof epoch !== 'string' ||
+			typeof tleLine1 !== 'string' ||
+			typeof tleLine2 !== 'string' ||
+			typeof noradCatId !== 'number' ||
+			typeof objectName !== 'string'
+		) {
+			throw new Error(`Invalid scene data row fields at ${context}`);
+		}
+		return [epoch, tleLine1, tleLine2, noradCatId, objectName];
+	}
+
+	async function loadSceneDataBlob(signal?: AbortSignal): Promise<SceneDataRow[]> {
+		const response = await fetch(`${base}/data/scene-data.json`, { signal });
 		if (!response.ok) {
 			throw new Error(`Failed to load scene data: ${response.status}`);
 		}
@@ -372,7 +394,106 @@
 		if (!Array.isArray(payload)) {
 			throw new Error('Invalid scene data response');
 		}
-		return payload as SceneDataRow[];
+		if (signal?.aborted) {
+			throw new DOMException('Scene data load aborted', 'AbortError');
+		}
+		return payload.map((row, index) => parseSceneDataRow(row, `json:${index}`));
+	}
+
+	async function loadSceneDataMetadata(signal?: AbortSignal): Promise<SceneMetadata> {
+		const response = await fetch(`${base}/data/scene-meta.json`, { signal });
+		if (!response.ok) {
+			throw new Error(`Failed to load scene metadata: ${response.status}`);
+		}
+		const payload = (await response.json()) as Partial<SceneMetadata>;
+		const count = Number(payload.count);
+		if (!Number.isInteger(count) || count < 0) {
+			throw new Error('Invalid scene metadata response');
+		}
+		return { count };
+	}
+
+	function appendSceneRows(
+		streamController: ReturnType<SceneController['startSatelliteStream']>,
+		rows: SceneDataRow[]
+	) {
+		if (rows.length === 0) {
+			return;
+		}
+		streamController.appendRows(rows.splice(0, rows.length));
+	}
+
+	async function loadSceneDataStream(
+		sceneController: SceneController,
+		signal?: AbortSignal
+	): Promise<void> {
+		const metadata = await loadSceneDataMetadata(signal);
+		const response = await fetch(`${base}/data/scene-data.ndjson`, { signal });
+		if (!response.ok) {
+			throw new Error(`Failed to load scene data stream: ${response.status}`);
+		}
+		if (!response.body) {
+			throw new Error('Scene data stream is not readable');
+		}
+
+		const streamController = sceneController.startSatelliteStream(metadata.count);
+		const reader = response.body.getReader();
+		const decoder = new TextDecoder();
+		const batch: SceneDataRow[] = [];
+		const batchSize = 256;
+		let bufferedText = '';
+		let rowIndex = 0;
+
+		try {
+			while (true) {
+				const { value, done } = await reader.read();
+				if (signal?.aborted) {
+					throw new DOMException('Scene data load aborted', 'AbortError');
+				}
+				bufferedText += decoder.decode(value, { stream: !done });
+				const lines = bufferedText.split('\n');
+				bufferedText = done ? '' : (lines.pop() ?? '');
+				for (const line of lines) {
+					if (line.trim() === '') {
+						continue;
+					}
+					batch.push(parseSceneDataRow(JSON.parse(line), `ndjson:${rowIndex}`));
+					rowIndex += 1;
+					if (batch.length >= batchSize) {
+						appendSceneRows(streamController, batch);
+					}
+				}
+				if (done) {
+					break;
+				}
+			}
+			if (bufferedText.trim() !== '') {
+				batch.push(parseSceneDataRow(JSON.parse(bufferedText), `ndjson:${rowIndex}`));
+			}
+			appendSceneRows(streamController, batch);
+			streamController.finish();
+		} catch (error) {
+			streamController.abort();
+			throw error;
+		} finally {
+			reader.releaseLock();
+		}
+	}
+
+	async function loadSceneData(
+		sceneController: SceneController,
+		signal?: AbortSignal
+	): Promise<void> {
+		try {
+			await loadSceneDataStream(sceneController, signal);
+		} catch (streamError) {
+			if (signal?.aborted) {
+				throw streamError;
+			}
+			console.warn('Streaming scene data failed; falling back to JSON scene data.', streamError);
+			const sceneData = await loadSceneDataBlob(signal);
+			await sceneController.loadSatellites(sceneData);
+		}
 	}
 
 	function getSceneInitErrorMessage(error: unknown) {
@@ -402,12 +523,13 @@
 			focusVisibleNoradId = sceneController.focusVisibleNoradId;
 			applyOrbitOverlay = sceneController.applyOrbitOverlay;
 			void sceneController.textureReady.finally(hideLoadingScreen);
-			void loadSceneData()
-				.then((sceneData) => sceneController.loadSatellites(sceneData))
-				.catch((error) => {
+			sceneDataAbortController = new AbortController();
+			void loadSceneData(sceneController, sceneDataAbortController.signal).catch((error) => {
+				if (!(error instanceof DOMException && error.name === 'AbortError')) {
 					sceneInitError = getSceneInitErrorMessage(error);
 					console.error('Error initializing satellites:', error);
-				});
+				}
+			});
 		} catch (error) {
 			sceneInitError = getSceneInitErrorMessage(error);
 			console.error('Error initializing scene:', error);
@@ -427,6 +549,7 @@
 		if (latLongIntervalId !== undefined) {
 			window.clearInterval(latLongIntervalId);
 		}
+		sceneDataAbortController?.abort();
 		if (cleanup) cleanup();
 	});
 

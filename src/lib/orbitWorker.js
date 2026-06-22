@@ -18,7 +18,22 @@ function getSatrec(satelliteIndex) {
 
 onmessage = function (event) {
 	if (event.data.type === 'init') {
-		satelliteData = event.data.satelliteData;
+		const capacity = Number(event.data.capacity);
+		satelliteData = Array.isArray(event.data.satelliteData)
+			? event.data.satelliteData
+			: new Array(Number.isFinite(capacity) ? capacity : 0);
+	} else if (event.data.type === 'add-satellites') {
+		if (!satelliteData) {
+			return;
+		}
+		const startIndex = Number(event.data.startIndex);
+		const rows = Array.isArray(event.data.satelliteData) ? event.data.satelliteData : [];
+		if (!Number.isInteger(startIndex) || startIndex < 0) {
+			return;
+		}
+		for (let offset = 0; offset < rows.length; offset++) {
+			satelliteData[startIndex + offset] = rows[offset];
+		}
 	} else if (event.data.type === 'process') {
 		const kind = event.data.kind === 'overlay' ? 'overlay' : 'focus';
 		const satelliteIndex = event.data.satelliteIndex;

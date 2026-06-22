@@ -1,7 +1,7 @@
 # Scene loading & satellite streaming
 
-Status: proposal. This document describes the desired shape of the scene-loading
-refactor, not an implementation checklist.
+Status: implemented through Phase 2. This document describes the shape of the
+scene-loading refactor, not a full implementation checklist.
 
 ## Intent
 
@@ -102,6 +102,15 @@ client can allocate fixed-size shared buffers, then append rows in batches.
 Production currently serves scene data through nginx from the static satellite
 data volume, while the Svelte route also exists for app/dev behavior. A streaming
 protocol must account for both paths, or deliberately remove the nginx bypass.
+
+Implemented shape:
+
+- `scene-meta.json` gives the total row count.
+- `scene-data.ndjson` streams one scene row per line.
+- The client allocates from metadata, then appends parsed batches to the live
+  satellite layer.
+- Workers receive catalog batches through incremental messages instead of one
+  full catalog at startup.
 
 ## Worker data cost
 
