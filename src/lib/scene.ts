@@ -999,6 +999,7 @@ export const createScene = (
 		geometry.setAttribute('customColor', new THREE.BufferAttribute(colors, 3));
 		geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
 		geometry.setAttribute('visibility', new THREE.BufferAttribute(renderVisible, 1));
+		geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), controls.maxDistance);
 		const points = new THREE.Points(geometry, satelliteMaterial);
 		points.renderOrder = 2;
 		scene.add(points);
@@ -1044,13 +1045,13 @@ export const createScene = (
 		function hoverColor() {
 			raycaster.setFromCamera(mouse, camera);
 			const intersects = raycaster.intersectObjects(scene.children, true);
-			const index = intersects.findIndex((intersect) => intersect.object.type === 'Points');
+			const pointIntersection = getVisiblePointIntersection(intersects);
 			const color = geometry.attributes['customColor'] as THREE.BufferAttribute;
 			let nextHoveredSatelliteIndex: number | undefined;
 			let didChangeColor = false;
 
-			if (index !== -1) {
-				nextHoveredSatelliteIndex = intersects[index].index as number;
+			if (pointIntersection) {
+				nextHoveredSatelliteIndex = pointIntersection.index as number;
 			}
 
 			if (
@@ -1113,6 +1114,16 @@ export const createScene = (
 			const color = geometry.attributes['customColor'] as THREE.BufferAttribute;
 			color.setXYZ(pointIndex, 1.0, 1.0, 1.0);
 		}
+
+		function getVisiblePointIntersection(intersects: THREE.Intersection[]) {
+			return intersects.find(
+				(intersect) =>
+					intersect.object === points &&
+					intersect.index !== undefined &&
+					renderVisible[intersect.index] > 0
+			);
+		}
+
 		function handleShortClick(event: MouseEvent) {
 			controls.minDistance = 0;
 
@@ -1122,16 +1133,12 @@ export const createScene = (
 
 			raycaster.setFromCamera(mouse, camera);
 			const intersects = raycaster.intersectObjects(scene.children, true);
-			if (intersects.length > 0 && intersects[0].object.type === 'Line') {
-				intersects.shift();
-			}
+			const pointIntersection = getVisiblePointIntersection(intersects);
 			if (intersects.length > 0) {
 				lerpTarget = undefined;
 				trackTarget = undefined;
-				if (intersects[0].object.type === 'Points') {
-					const index = intersects[0].index as number;
-
-					selectSatellite(index);
+				if (pointIntersection) {
+					selectSatellite(pointIntersection.index as number);
 				} else if (intersects[0].object.type === 'Mesh') {
 					clearSelectedSatelliteHighlight();
 					lerpTarget = {
