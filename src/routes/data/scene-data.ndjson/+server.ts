@@ -11,7 +11,7 @@ export const GET: RequestHandler = async () => {
 	try {
 		await waitForStartupInitialization();
 		await fs.promises.access(SCENE_DATA_NDJSON_PATH, fs.constants.R_OK);
-		const fileStream = fs.createReadStream(SCENE_DATA_NDJSON_PATH, { encoding: 'utf8' });
+		const fileStream = fs.createReadStream(SCENE_DATA_NDJSON_PATH);
 		return new Response(Readable.toWeb(fileStream) as ReadableStream, {
 			headers: {
 				'content-type': 'application/x-ndjson; charset=utf-8',
