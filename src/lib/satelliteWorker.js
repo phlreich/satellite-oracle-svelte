@@ -16,7 +16,7 @@ let currentSatelliteUpdateTimes = null;
 /** @type {Array<{ tleLine1: string, tleLine2: string, satrec?: any }> | null} */
 let satelliteData = null;
 /** @type {Uint8Array | null} */
-let visibility = null;
+let computeVisibility = null;
 /** @type {number[]} */
 let indices = [];
 let isRunning = false;
@@ -55,7 +55,7 @@ const runLoop = async () => {
 			!currentSatelliteVelocities ||
 			!currentSatelliteUpdateTimes ||
 			!satelliteData ||
-			!visibility
+			!computeVisibility
 		) {
 			await sleep(50);
 			continue;
@@ -68,7 +68,7 @@ const runLoop = async () => {
 		for (let step = 0; step < indices.length; step++) {
 			const orderedIndex = (step + rotationOffset) % indices.length;
 			const i = indices[orderedIndex];
-			if (visibility[i] > 0) {
+			if (computeVisibility[i] > 0) {
 				// we only need to update the positions of satellites that are visible
 				const satrec = getSatrec(i);
 				if (!satrec) {
@@ -132,7 +132,7 @@ onmessage = (event) => {
 		currentSatelliteVelocities = event.data.currentSatelliteVelocities;
 		currentSatelliteUpdateTimes = event.data.currentSatelliteUpdateTimes;
 		satelliteData = event.data.satelliteData;
-		visibility = event.data.visibility;
+		computeVisibility = event.data.computeVisibility ?? event.data.visibility;
 		const receivedWorkerId = Number(event.data.workerId);
 		workerId = Number.isFinite(receivedWorkerId) ? receivedWorkerId : -1;
 		if (!isRunning) {

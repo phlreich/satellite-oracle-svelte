@@ -337,8 +337,7 @@
 							stopThinkingAnimation();
 							return;
 						}
-						const betweenPhrasesMs =
-							getCursorBlinkDurationMs() * THINKING_BETWEEN_PHRASES_BLINKS;
+						const betweenPhrasesMs = getCursorBlinkDurationMs() * THINKING_BETWEEN_PHRASES_BLINKS;
 						queueThinkingCycle(betweenPhrasesMs);
 					}, THINKING_ERASE_INTERVAL_MS);
 				}, THINKING_HOLD_FULL_MS);
@@ -392,25 +391,28 @@
 	onMount(() => {
 		const userAgent = window.navigator.userAgent;
 		isMobileView = isMobile(userAgent);
-		(async () => {
-			try {
-				sceneInitError = '';
-				const sceneData = await loadSceneData();
-				const sceneController = await createScene(el, sceneData, selectedSatellite, sharedData);
-				cleanup = sceneController.cleanup;
-				focusPreviousVisibleSatellite = sceneController.focusPreviousVisibleSatellite;
-				focusNextVisibleSatellite = sceneController.focusNextVisibleSatellite;
-				getVisibleCount = sceneController.getVisibleCount;
-				focusEarth = sceneController.focusEarth;
-				focusVisibleNoradId = sceneController.focusVisibleNoradId;
-				applyOrbitOverlay = sceneController.applyOrbitOverlay;
-			} catch (error) {
-				sceneInitError = getSceneInitErrorMessage(error);
-				console.error('Error initializing scene:', error);
-			} finally {
-				hideLoadingScreen();
-			}
-		})();
+		try {
+			sceneInitError = '';
+			const sceneController = createScene(el, selectedSatellite, sharedData);
+			cleanup = sceneController.cleanup;
+			focusPreviousVisibleSatellite = sceneController.focusPreviousVisibleSatellite;
+			focusNextVisibleSatellite = sceneController.focusNextVisibleSatellite;
+			getVisibleCount = sceneController.getVisibleCount;
+			focusEarth = sceneController.focusEarth;
+			focusVisibleNoradId = sceneController.focusVisibleNoradId;
+			applyOrbitOverlay = sceneController.applyOrbitOverlay;
+			void sceneController.textureReady.finally(hideLoadingScreen);
+			void loadSceneData()
+				.then((sceneData) => sceneController.loadSatellites(sceneData))
+				.catch((error) => {
+					sceneInitError = getSceneInitErrorMessage(error);
+					console.error('Error initializing satellites:', error);
+				});
+		} catch (error) {
+			sceneInitError = getSceneInitErrorMessage(error);
+			console.error('Error initializing scene:', error);
+			hideLoadingScreen();
+		}
 		latLongIntervalId = window.setInterval(() => {
 			updateLatLong();
 		}, 1000);
@@ -576,10 +578,7 @@
 		}
 
 		chatHistory.update((history) => {
-			return [
-				...history,
-				{ role: 'assistant', content: assistantMessage, kind: 'chat' }
-			];
+			return [...history, { role: 'assistant', content: assistantMessage, kind: 'chat' }];
 		});
 		await tick();
 		scrollToLatestAssistantMessageStart();
@@ -862,8 +861,13 @@
 	}
 
 	@keyframes blink {
-		0%, 100% { opacity: 1; }
-		50% { opacity: 0; }
+		0%,
+		100% {
+			opacity: 1;
+		}
+		50% {
+			opacity: 0;
+		}
 	}
 
 	.reset-button {
