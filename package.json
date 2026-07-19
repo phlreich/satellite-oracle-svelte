@@ -47,10 +47,10 @@
 		"node": "24.x"
 	},
 	"dependencies": {
-		"better-sqlite3": "^12.4.1",
+		"better-sqlite3": "^12.11.1",
 		"node-schedule": "^2.1.1",
-		"openai": "^6.21.0",
-		"papaparse": "^5.5.3",
+		"openai": "^6.48.0",
+		"papaparse": "^5.5.4",
 		"satellite.js": "^6.0.2",
 		"three": "^0.182.0"
 	},
