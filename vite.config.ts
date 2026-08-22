@@ -29,6 +29,9 @@ const viteServerConfig: Plugin = {
 
 export default defineConfig({
 	plugins: [viteServerConfig, sveltekit()],
+	worker: {
+		format: 'es'
+	},
 	server: {
 		hmr: false // Disable HMR completely
 	}
