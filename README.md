@@ -40,9 +40,16 @@ which pulls this repo in as a git submodule.
 The app is built to live under the `/satellite-oracle` base path. Traffic to the legacy
 `satellite-oracle.com` host redirects to `https://phlreich.com/satellite-oracle`.
 
-> Note: the build inlines `OPENAI_API_KEY` (and other `$env/static/private` vars) at
-> build time, so a populated `.env` must be present in the build context when the image
-> is built.
+Credentials are read at runtime through the private variables declared in `src/env.ts`.
+Pass them to the container environment; `.env` files are excluded from the image build.
+SvelteKit configuration, including the deployment base path, lives in `vite.config.ts`.
+
+TypeScript stays on the 6.0 release line supported by the current Svelte checker and
+TypeScript ESLint packages. A minimatch override supplies the patched 11.x release
+until the development tools update their dependency ranges. The latest deepmerge
+release has an unpatched low severity advisory in the Vite Svelte plugin's development
+dependencies; it is removed from the production image when development dependencies
+are pruned.
 
 ## Application Overview
 

@@ -3,7 +3,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { twoline2satrec, gstime, geodeticToEcf, ecfToEci } from 'satellite.js';
 import Stats from 'three/examples/jsm/libs/stats.module.js';
 import type { Writable } from 'svelte/store';
-import earthTextureUrl from '$lib/assets/earth.webp';
+import earthTextureUrl from '#lib/assets/earth.webp';
 
 type SceneDataRow = [string, string, string, number, string];
 type QueryResultRow = { NORAD_CAT_ID: number };

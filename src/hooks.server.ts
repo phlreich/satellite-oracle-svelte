@@ -1,11 +1,12 @@
+import type { Handle } from '@sveltejs/kit/hooks';
+
 // src/hooks.server.ts
-import type { Handle } from '@sveltejs/kit';
-import { dev } from '$app/environment';
-import { refreshData } from '$lib/server/database.server';
-import { appLogger, newRequestId, serializeError } from '$lib/server/logger';
-import { triggerStartupInitialization } from '$lib/server/startup.server';
+import { dev } from '$app/env';
+import { refreshData } from '#lib/server/database.server.js';
+import { appLogger, newRequestId, serializeError } from '#lib/server/logger.js';
+import { triggerStartupInitialization } from '#lib/server/startup.server.js';
 import { scheduleJob } from 'node-schedule';
-import earthTextureUrl from '$lib/assets/earth.webp';
+import earthTextureUrl from '#lib/assets/earth.webp';
 
 const hooksLogger = appLogger.child({ component: 'hooks' });
 

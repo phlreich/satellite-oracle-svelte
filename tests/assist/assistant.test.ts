@@ -23,8 +23,11 @@ vi.mock('openai', () => {
 	};
 });
 
-vi.mock('$env/dynamic/private', () => ({
-	env: { OPENAI_API_KEY: 'test-key', OPENAI_ASSIST_MODEL: 'gpt-5-mini' }
+vi.mock('$app/env/private', () => ({
+	OPENAI_API_KEY: 'test-key',
+	OPENAI_ASSIST_MODEL: 'gpt-5-mini',
+	ASSIST_TRACE: '0',
+	ASSIST_LOG_FULL: '0'
 }));
 
 import { runAssist } from '../../src/lib/server/assist/assistant';
@@ -288,13 +291,13 @@ describe('runAssist tool loop behavior', () => {
 			output: [
 				{
 					type: 'function_call',
-						name: 'set_visibility_sql',
-						call_id: 'call_fast_1',
-						arguments: JSON.stringify({
-							sql: "SELECT norad_cat_id FROM semantic_satcat WHERE object_type LIKE '%DEBRIS%' LIMIT 5",
-							mode: 'replace',
-							set_orbits_mode: 'replace',
-							focus_target: 'earth'
+					name: 'set_visibility_sql',
+					call_id: 'call_fast_1',
+					arguments: JSON.stringify({
+						sql: "SELECT norad_cat_id FROM semantic_satcat WHERE object_type LIKE '%DEBRIS%' LIMIT 5",
+						mode: 'replace',
+						set_orbits_mode: 'replace',
+						focus_target: 'earth'
 					})
 				}
 			],
@@ -320,14 +323,14 @@ describe('runAssist tool loop behavior', () => {
 			output: [
 				{
 					type: 'function_call',
-						name: 'set_visibility_sql',
-						call_id: 'call_fast_2',
-						arguments: JSON.stringify({
-							sql: "SELECT norad_cat_id FROM semantic_satcat WHERE object_type LIKE '%DEBRIS%' LIMIT 3",
-							mode: 'replace',
-							id_column: 'norad_cat_id',
-							assistant_message: 'Debris applied from tool message.'
-						})
+					name: 'set_visibility_sql',
+					call_id: 'call_fast_2',
+					arguments: JSON.stringify({
+						sql: "SELECT norad_cat_id FROM semantic_satcat WHERE object_type LIKE '%DEBRIS%' LIMIT 3",
+						mode: 'replace',
+						id_column: 'norad_cat_id',
+						assistant_message: 'Debris applied from tool message.'
+					})
 				}
 			],
 			output_text: ''

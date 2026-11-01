@@ -1,8 +1,7 @@
 import fs from 'fs/promises';
 import path from 'path';
-import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { waitForStartupInitialization } from '$lib/server/startup.server';
+import { waitForStartupInitialization } from '#lib/server/startup.server.js';
 
 const SCENE_META_PATH = path.join(process.cwd(), 'src/data/scene-meta.json');
 
@@ -17,7 +16,7 @@ export const GET: RequestHandler = async () => {
 			}
 		});
 	} catch (error) {
-		return json(
+		return Response.json(
 			{ error: 'Scene metadata artifact not available', details: String(error) },
 			{ status: 503 }
 		);

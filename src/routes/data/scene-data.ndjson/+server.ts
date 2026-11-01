@@ -1,9 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 import { Readable } from 'stream';
-import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { waitForStartupInitialization } from '$lib/server/startup.server';
+import { waitForStartupInitialization } from '#lib/server/startup.server.js';
 
 const SCENE_DATA_NDJSON_PATH = path.join(process.cwd(), 'src/data/scene-data.ndjson');
 
@@ -19,7 +18,7 @@ export const GET: RequestHandler = async () => {
 			}
 		});
 	} catch (error) {
-		return json(
+		return Response.json(
 			{ error: 'Scene NDJSON artifact not available', details: String(error) },
 			{ status: 503 }
 		);

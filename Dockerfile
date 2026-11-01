@@ -2,10 +2,10 @@
 FROM node:24 AS build
 WORKDIR /usr/src/app
 COPY package*.json ./
-RUN npm ci
+RUN npm ci --no-audit
 COPY . .
 RUN npm run build
-RUN npm prune --omit=dev
+RUN npm prune --omit=dev --no-audit
 
 FROM node:24-bookworm-slim AS runtime
 WORKDIR /usr/src/app

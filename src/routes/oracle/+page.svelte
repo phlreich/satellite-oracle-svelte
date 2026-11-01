@@ -1,12 +1,11 @@
-<!-- src/routes/oracle/+page.svelte -->
 <script lang="ts">
 	import { onMount, onDestroy, tick } from 'svelte';
-	import { createScene } from '$lib/scene';
+	import { createScene } from '#lib/scene.js';
 	import { writable, get } from 'svelte/store';
-	import { isMobile } from '$lib/utils';
+	import { isMobile } from '#lib/utils.js';
 	import type { SatRec } from 'satellite.js';
 	import { eciToGeodetic, gstime, propagate, degreesLat, degreesLong } from 'satellite.js';
-	import { base } from '$app/paths';
+	import { resolve } from '$app/paths';
 
 	let chatWindow: HTMLDivElement;
 	let startX: number, startY: number, startWidth: number, startHeight: number;
@@ -124,14 +123,7 @@
 				noradCatIds: number[];
 				returnedCount: number;
 			};
-			focus?:
-				| {
-						target: 'earth';
-				  }
-				| {
-						target: 'norad';
-						noradCatId: number;
-				  };
+			focus?: { target: 'earth' } | { target: 'norad'; noradCatId: number };
 		} | null;
 	};
 
@@ -386,7 +378,7 @@
 	}
 
 	async function loadSceneDataBlob(signal?: AbortSignal): Promise<SceneDataRow[]> {
-		const response = await fetch(`${base}/data/scene-data.json`, { signal });
+		const response = await fetch(resolve('/data/scene-data.json'), { signal });
 		if (!response.ok) {
 			throw new Error(`Failed to load scene data: ${response.status}`);
 		}
@@ -401,7 +393,7 @@
 	}
 
 	async function loadSceneDataMetadata(signal?: AbortSignal): Promise<SceneMetadata> {
-		const response = await fetch(`${base}/data/scene-meta.json`, { signal });
+		const response = await fetch(resolve('/data/scene-meta.json'), { signal });
 		if (!response.ok) {
 			throw new Error(`Failed to load scene metadata: ${response.status}`);
 		}
@@ -428,7 +420,7 @@
 		signal?: AbortSignal
 	): Promise<void> {
 		const metadata = await loadSceneDataMetadata(signal);
-		const response = await fetch(`${base}/data/scene-data.ndjson`, { signal });
+		const response = await fetch(resolve('/data/scene-data.ndjson'), { signal });
 		if (!response.ok) {
 			throw new Error(`Failed to load scene data stream: ${response.status}`);
 		}
@@ -602,7 +594,7 @@
 
 	async function assistChat(history: Message[]) {
 		try {
-			const response = await fetch(`${base}/api/assist`, {
+			const response = await fetch(resolve('/api/assist'), {
 				method: 'POST',
 				headers: {
 					'Content-Type': 'application/json'
@@ -708,6 +700,8 @@
 	}
 </script>
 
+<!-- src/routes/oracle/+page.svelte -->
+
 <svelte:head>
 	<title>Satellite Oracle</title>
 	<meta name="description" content="The satellite oracle will see you now." />
@@ -734,12 +728,12 @@
 		<pre>Latitude:   {formatCoordinate($selectedSatellite.latitude)}</pre>
 		<pre>Longitude:  {formatCoordinate($selectedSatellite.longitude)}</pre>
 		<div class="satellite-nav">
-			<button class="nav-button" on:click={goLeft} aria-label="Go to previous visible object">
-				&larr;
-			</button>
-			<button class="nav-button" on:click={goRight} aria-label="Go to next visible object">
-				&rarr;
-			</button>
+			<button class="nav-button" on:click={goLeft} aria-label="Go to previous visible object"
+				>←</button
+			>
+
+			<button class="nav-button" on:click={goRight} aria-label="Go to next visible object">→</button
+			>
 		</div>
 		<!-- <pre>{$selectedSatellite.details}</pre> -->
 	{/if}
@@ -773,8 +767,7 @@
 			bind:value={$inputValue}
 			placeholder="Type anything..."
 			on:keyup={handleKeyUp}
-			disabled={assistPending}
-		></textarea>
+			disabled={assistPending}></textarea>
 		<button class="reset-button" on:click={resetChat}>Reset Chat</button>
 	</div>
 </div>

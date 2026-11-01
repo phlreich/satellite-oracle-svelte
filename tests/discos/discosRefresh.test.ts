@@ -5,7 +5,7 @@ const { fetchMock } = vi.hoisted(() => ({
 	fetchMock: vi.fn()
 }));
 
-vi.mock('$env/dynamic/private', () => ({ env: { TOKEN_DW: 'test-token' } }));
+vi.mock('$app/env/private', () => ({ TOKEN_DW: 'test-token' }));
 
 import { ensureDiscosTables, refreshDiscosData } from '../../src/lib/server/discos.server';
 

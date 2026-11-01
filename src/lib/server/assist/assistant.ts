@@ -10,9 +10,15 @@ import type {
 } from 'openai/resources/responses/responses';
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
-import { env } from '$env/dynamic/private';
-import { createLogger, serializeError } from '$lib/server/logger';
-import { guardReadOnlySql } from '$lib/server/assist/sqlGuard';
+import {
+	ASSIST_TRACE,
+	ASSIST_LOG_FULL,
+	OPENAI_API_KEY,
+	OPENAI_ASSIST_MODEL
+} from '$app/env/private';
+
+import { createLogger, serializeError } from '#lib/server/logger.js';
+import { guardReadOnlySql } from '#lib/server/assist/sqlGuard.js';
 import type {
 	AssistFocusAction,
 	AssistRequestBody,
@@ -78,7 +84,7 @@ function hasTruthyTraceFlag(value: string | undefined): boolean | null {
 }
 
 function isAssistTraceEnabled(): boolean {
-	const explicit = hasTruthyTraceFlag(env.ASSIST_TRACE);
+	const explicit = hasTruthyTraceFlag(ASSIST_TRACE);
 	if (explicit !== null) {
 		return explicit;
 	}
@@ -86,7 +92,7 @@ function isAssistTraceEnabled(): boolean {
 }
 
 function isAssistFullLogEnabled(): boolean {
-	const explicit = hasTruthyTraceFlag(env.ASSIST_LOG_FULL);
+	const explicit = hasTruthyTraceFlag(ASSIST_LOG_FULL);
 	if (explicit !== null) {
 		return explicit;
 	}
@@ -307,6 +313,7 @@ function formatRowsTable(rows: Record<string, unknown>[]): string | null {
 	if (hasMoreColumns) {
 		typeRow.push('...');
 	}
+
 	const widths = headers.map((header, index) =>
 		Math.max(
 			header.length,
@@ -319,6 +326,7 @@ function formatRowsTable(rows: Record<string, unknown>[]): string | null {
 	const top = `┌${widths.map((width) => '─'.repeat(width + 2)).join('┬')}┐`;
 	const middle = `├${widths.map((width) => '─'.repeat(width + 2)).join('┼')}┤`;
 	const bottom = `└${widths.map((width) => '─'.repeat(width + 2)).join('┴')}┘`;
+
 	return [
 		top,
 		rowLine(headers),
@@ -617,7 +625,7 @@ function summarizeToolOutput(
 					: null,
 			focus_target:
 				typeof output.focus === 'object' && output.focus
-					? (output.focus as { target?: string }).target ?? null
+					? ((output.focus as { target?: string }).target ?? null)
 					: null
 		};
 	}
@@ -716,8 +724,7 @@ function summarizeFunctionCallOutputForTrace(
 const SQL_SELECT_TOOL: FunctionTool = {
 	type: 'function',
 	name: 'sql_select',
-	description:
-		`Execute one read-only SELECT query against SQLite for analysis before deciding what to show. Returns row count, columns, preview rows, random sample rows, and a result_ref. This analysis tool can be used at most ${SQL_SELECT_BUDGET} times per request; once exhausted, you must use an action tool.`,
+	description: `Execute one read-only SELECT query against SQLite for analysis before deciding what to show. Returns row count, columns, preview rows, random sample rows, and a result_ref. This analysis tool can be used at most ${SQL_SELECT_BUDGET} times per request; once exhausted, you must use an action tool.`,
 	strict: false,
 	parameters: {
 		type: 'object',
@@ -1034,7 +1041,10 @@ function buildDatabaseContext(db: Database.Database) {
 				name: string;
 				type: string;
 			}>;
-			const shown = columns.slice(0, 18).map((col) => col.name).join(', ');
+			const shown = columns
+				.slice(0, 18)
+				.map((col) => col.name)
+				.join(', ');
 			const remainder = columns.length > 18 ? ` (+${columns.length - 18} more)` : '';
 			parts.push(`- ${viewName}: ${shown}${remainder}`);
 		}
@@ -1060,7 +1070,10 @@ function buildDatabaseContext(db: Database.Database) {
 			name: string;
 			type: string;
 		}>;
-		const shown = columns.slice(0, 14).map((col) => col.name).join(', ');
+		const shown = columns
+			.slice(0, 14)
+			.map((col) => col.name)
+			.join(', ');
 		const remainder = columns.length > 14 ? ` (+${columns.length - 14} more)` : '';
 		parts.push(`- ${tableName}: ${shown}${remainder}`);
 	}
@@ -1515,14 +1528,12 @@ async function executeToolCall({
 				available_columns: storedResult.columns
 			};
 		}
-		const { sceneIds, filteredOutCount } = filterNoradIdsWithSummary(
-			extraction.ids,
-			sceneUniverse
-		);
+		const { sceneIds, filteredOutCount } = filterNoradIdsWithSummary(extraction.ids, sceneUniverse);
 		if (sceneIds.length === 0) {
 			return {
 				ok: false,
-				error: 'Result rows contained NORAD IDs, but none are present in the current scene universe.',
+				error:
+					'Result rows contained NORAD IDs, but none are present in the current scene universe.',
 				available_columns: storedResult.columns,
 				filtered_out_count: filteredOutCount,
 				scene_total_count: sceneUniverse.totalCount
@@ -1648,14 +1659,12 @@ async function executeToolCall({
 				available_columns: storedResult.columns
 			};
 		}
-		const { sceneIds, filteredOutCount } = filterNoradIdsWithSummary(
-			extraction.ids,
-			sceneUniverse
-		);
+		const { sceneIds, filteredOutCount } = filterNoradIdsWithSummary(extraction.ids, sceneUniverse);
 		if (extraction.ids.length > 0 && sceneIds.length === 0) {
 			return {
 				ok: false,
-				error: 'Result rows contained NORAD IDs, but none are present in the current scene universe.',
+				error:
+					'Result rows contained NORAD IDs, but none are present in the current scene universe.',
 				available_columns: storedResult.columns,
 				filtered_out_count: filteredOutCount,
 				scene_total_count: sceneUniverse.totalCount
@@ -1710,8 +1719,12 @@ async function executeToolCall({
 	if (toolName === 'set_orbits') {
 		const mode = normalizeMode(toolArgs.mode);
 		const noradIds = normalizeNoradIds(toolArgs.norad_ids);
+
 		if (!mode || (mode !== 'replace' && noradIds.length === 0)) {
-			return { ok: false, error: 'set_orbits requires mode and valid NORAD IDs.' };
+			return {
+				ok: false,
+				error: 'set_orbits requires mode and valid NORAD IDs.'
+			};
 		}
 		const { sceneIds, filteredOutCount } = filterNoradIdsWithSummary(noradIds, sceneUniverse);
 		if (noradIds.length > 0 && sceneIds.length === 0) {
@@ -1810,7 +1823,9 @@ function buildFallbackMessage(action: AssistSceneAction): string {
 		);
 	}
 	if (action.orbits) {
-		parts.push(`Applied orbit mode ${action.orbits.mode} to ${action.orbits.returnedCount} objects.`);
+		parts.push(
+			`Applied orbit mode ${action.orbits.mode} to ${action.orbits.returnedCount} objects.`
+		);
 	}
 	if (action.focus) {
 		parts.push(
@@ -1827,15 +1842,14 @@ export async function runAssist(
 	options?: { requestId?: string }
 ): Promise<AssistResponse> {
 	const openaiApiKey =
-		typeof env.OPENAI_API_KEY === 'string' && env.OPENAI_API_KEY.trim() !== ''
-			? env.OPENAI_API_KEY
-			: null;
+		typeof OPENAI_API_KEY === 'string' && OPENAI_API_KEY.trim() !== '' ? OPENAI_API_KEY : null;
+
 	if (!openaiApiKey) {
 		throw new Error('OPENAI_API_KEY is not configured.');
 	}
 	const openai = new OpenAI({ apiKey: openaiApiKey });
 	const db = openReadDatabase();
-	const model = env.OPENAI_ASSIST_MODEL || 'gpt-5-mini';
+	const model = OPENAI_ASSIST_MODEL || 'gpt-5-mini';
 	const sceneContext = normalizeSceneContext(body.sceneContext);
 	const sceneUniverse = loadSceneUniverse(db);
 	const requestId = options?.requestId ?? 'unknown';

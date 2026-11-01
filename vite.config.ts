@@ -1,4 +1,5 @@
-// vite.config.ts
+import adapter from '@sveltejs/adapter-node';
+import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig, type Plugin } from 'vite';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -27,12 +28,28 @@ const viteServerConfig: Plugin = {
 	}
 };
 
+const dev = process.env.NODE_ENV === 'development';
+const baseFromEnv = process.env.APP_BASE_PATH ?? '/satellite-oracle';
+
+const sanitizeBase = (value: string | undefined): '' | `/${string}` => {
+	if (!value || value === '/') return '';
+
+	return `/${value.replace(/^\/+|\/+$/g, '')}`;
+};
+
+const normalizedBase = sanitizeBase(baseFromEnv);
+
 export default defineConfig({
-	plugins: [viteServerConfig, sveltekit()],
-	worker: {
-		format: 'es'
-	},
-	server: {
-		hmr: false // Disable HMR completely
-	}
+	plugins: [
+		viteServerConfig,
+		sveltekit({
+			// Consult https://kit.svelte.dev/docs/integrations#preprocessors
+			// for more information about preprocessors
+			preprocess: vitePreprocess(),
+			adapter: adapter(),
+			paths: { base: dev ? '' : normalizedBase }
+		})
+	],
+	worker: { format: 'es' },
+	server: { hmr: false /* Disable HMR completely */ }
 });

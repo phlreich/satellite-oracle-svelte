@@ -8,7 +8,7 @@ import { gzip } from 'zlib';
 import { promisify } from 'util';
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
-import { env } from '$env/dynamic/private';
+import { TOKEN_DW, EMAIL, PASSWORD } from '$app/env/private';
 import { createLogger, serializeError } from './logger';
 import { ensureDiscosTables, refreshDiscosData } from './discos.server';
 
@@ -51,7 +51,7 @@ function tableExists(db: Database.Database, table: string): boolean {
 }
 
 function seedDiscosSnapshotFromLiveDatabase(targetDb: Database.Database) {
-	if (!hasToken(env.TOKEN_DW) || !nfs.existsSync(DB_PATH)) {
+	if (!hasToken(TOKEN_DW) || !nfs.existsSync(DB_PATH)) {
 		return;
 	}
 
@@ -642,10 +642,12 @@ async function ensureSourceCsvs() {
 		return;
 	}
 	dbLogger.info('source CSV files missing; downloading', { missing });
-	await updateCSVs(env.EMAIL, env.PASSWORD);
+	await updateCSVs(EMAIL, PASSWORD);
+
 	const stillMissing = DATASETS.filter(
 		(dataset) => !nfs.existsSync(`${process.cwd()}/src/data/${dataset}.csv`)
 	);
+
 	if (stillMissing.length > 0) {
 		throw new Error(`Missing source CSV files after refresh: ${stillMissing.join(', ')}`);
 	}
@@ -709,7 +711,7 @@ function hasPopulatedLiveDatabase() {
 		return false;
 	}
 
-	const requireDiscos = hasToken(env.TOKEN_DW);
+	const requireDiscos = hasToken(TOKEN_DW);
 	const db = new Database(DB_PATH, { readonly: true, fileMustExist: true });
 	try {
 		const hasCoreData = hasRows(db, 'satcat') && hasRows(db, 'boxscore') && hasRows(db, 'gp');
@@ -766,7 +768,7 @@ export async function initializeDatabaseAndSetCache() {
 export async function refreshData() {
 	const startTime = Date.now();
 	dbLogger.info('scheduled database refresh started', { startTime });
-	await updateCSVs(env.EMAIL, env.PASSWORD);
+	await updateCSVs(EMAIL, PASSWORD);
 	await ensureSourceCsvs();
 	const sceneDataRows = await buildAndSwapDatabase();
 	const endTime = Date.now();

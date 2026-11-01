@@ -21,6 +21,7 @@ time, and a chat interface filters/focuses them via natural-language queries.
 ## Architecture
 
 ### Runtime skeleton
+
 - `src/app.html` — inline loading screen + shared cursor-blink CSS variable (instant first paint).
 - `src/hooks.server.ts` — startup DB/cache init, scheduling, request logging.
 - `src/routes/api/assist/+server.ts` — request validation + assist orchestration entry.
@@ -33,11 +34,13 @@ time, and a chat interface filters/focuses them via natural-language queries.
 - `src/lib/scene.ts` — visibility application and camera focus.
 
 ### Startup gating
+
 - Dev startup fires an internal `/health` warmup so DB init begins before the first browser visit.
 - `/api/assist` and `/data/scene-data.json` both `waitForStartupInitialization()` before serving.
 - Startup init failures are logged and swallowed (not process-fatal), so degraded behavior can surface later at request time.
 
 ### Database shape
+
 - Raw tables: `gp`, `satcat`, `boxscore`, `discos_objects`, `discos_object_entities`.
 - Semantic views for assist SQL: `semantic_gp`, `semantic_satcat`, `semantic_boxscore`,
   `semantic_discos_objects`, `semantic_discos_object_entities` — clearer column names without
@@ -51,6 +54,7 @@ time, and a chat interface filters/focuses them via natural-language queries.
 A single `/api/assist` Responses API tool loop with round-aware tool gating.
 
 ### Tools
+
 - `set_visibility_sql` — fast path: run one SELECT, extract NORAD IDs, apply visibility
   directly; optional orbit/focus updates and `assistant_message` in the same call.
 - `sql_select` — analysis SELECT returning `result_ref`, row count, columns, preview + sample rows.
@@ -62,6 +66,7 @@ The server validates tool args and applies a single deterministic scene-action p
 (`action.visibility` / `action.orbits` / `action.focus`).
 
 ### SQL guard
+
 - SQL is normalized and validated as a single read-only statement.
 - A SQLite authorizer allows reads only through `semantic_*` views (plus internal `sqlite_*`).
   It distinguishes direct table reads from view-expansion reads (`triggerOrView`), so raw
@@ -72,6 +77,7 @@ The server validates tool args and applies a single deterministic scene-action p
   still experimental in Node 24.)
 
 ### Round budgeting and fast return
+
 - Max `3` tool rounds per request.
 - `sql_select` analysis budget is `2` calls; it is unavailable in the last model round.
 - If round 0 contains only successful fast-action tools with no `sql_select`, the runtime
@@ -80,6 +86,7 @@ The server validates tool args and applies a single deterministic scene-action p
   `output_text` is empty.
 
 ### Limits
+
 - End-to-end latency is usually dominated by upstream model time (a `show debris` run was
   18.6s total but only 29ms of local SQL — the rest was OpenAI response/queue time).
 - Uncapped `sql_select` result sets can grow memory and followup payload size.
@@ -137,6 +144,7 @@ The server validates tool args and applies a single deterministic scene-action p
   CENSORING MANIFOLD) should read as purposeful but resist resolution.
 
 ### Principles
+
 1. Dim at rest, bright on interaction.
 2. Structure over color — differentiate via alignment, borders, spacing, not fills.
 3. The void is design — empty space is intentional.
@@ -147,10 +155,12 @@ The server validates tool args and applies a single deterministic scene-action p
 ## Dev & Ops
 
 ### Commands
+
 - `npm run dev` — writes runtime logs to `logs/dev-YYYYMMDD-HHMMSS.log` and streams to terminal.
 - `npm run dev:raw`, `npm test`, `npm run check`, `npm run lint`, `npm run build`.
 
 ### Dev behavior
+
 - Dev uses an empty base path, so local routes are `/oracle`, `/api/assist`, `/data/scene-data.json`
   (production serves them under `/satellite-oracle/*`).
 - `npm run dev` skips full DB rebuild / DISCOS refresh when live tables are already populated, but
@@ -158,22 +168,26 @@ The server validates tool args and applies a single deterministic scene-action p
   `src/data/satellite.db` before startup.
 
 ### Logging controls
+
 - `LOG_LEVEL=debug|warn` — verbosity.
 - `ASSIST_LOG_FULL=1|0` — include full OpenAI/tool payloads in dev logs (defaults on outside prod).
 - `ASSIST_TRACE=1|0` — write readable markdown traces under `logs/assist/<timestamp>-<requestId>.md`
   (defaults on outside prod). Traces render parsed summaries; dev `*full*` entries keep raw payloads.
 
 ### Assist debug loop
+
 1. `npm run dev`, trigger `/api/assist` from the UI.
 2. Find the request by `requestId` in the latest dev log (`ls -1t logs/dev-*.log | head -n 1`).
 3. Open `logs/assist/<timestamp>-<requestId>.md` for the compact timeline; use `*full*` dev-log
    entries for raw fidelity (`rg " responses.create (request|response) full" logs/dev-*.log`).
 
 ### Assist hard limits
+
 - Reject `/api/assist` payloads over `50_000` bytes (`content-length`) or with more than `40` messages.
 - Forwarded chat history is trimmed to the last `18` messages.
 
 ### Deploy
+
 - Container startup runs `node scripts/start-server-with-warmup.mjs` (internal warmup before traffic).
 - `docker compose up -d --build`, then verify `/satellite-oracle/data/scene-data.json` + gzip headers.
 - DISCOSweb rate limit: ~`100` requests/min per token (`X-RateLimit-Limit: 100`); honor `429` + `Retry-After`.
@@ -196,7 +210,7 @@ The server validates tool args and applies a single deterministic scene-action p
   rows) while `discos_objects` stays ~89,099, so cross-source count mismatches are expected.
 - DISCOS operator names can differ from intuition: OneWeb appears as `One Web` (with a space), so
   `entity_name LIKE '%OneWeb%'` returns zero and can make the model wrongly broaden filters.
-- `satcat.SITE`/`gp.SITE` are launch-site *codes* (e.g. `TTMTR`, `VOSTO`); human-readable names live
+- `satcat.SITE`/`gp.SITE` are launch-site _codes_ (e.g. `TTMTR`, `VOSTO`); human-readable names live
   in `discos_objects.launch_site_name`. Listing only column names often makes the model confuse them.
 - Some objects exist in DISCOS but not in GP/SATCAT (decayed), so "visible in orbit now" filters
   legitimately return zero for them (e.g. German debris NORAD `38844`/`44597`, decayed 2014/2020).
@@ -209,7 +223,9 @@ Small corpus of high-value prompts with SQL and expected counts against the loca
 (last revalidated 2026-02-10).
 
 ### Q1 — OneWeb Soyuz subset (expect `386`)
+
 > Show only OneWeb commercial-communications payloads still trackable, excluding Falcon 9; restrict to Soyuz-2-1B Fregat launches from Vostochny or Baikonur.
+
 ```sql
 SELECT COUNT(DISTINCT d.norad_cat_id) AS c
 FROM discos_objects d
@@ -226,7 +242,9 @@ WHERE d.object_class = 'Payload'
 ```
 
 ### Q2 — US launch + non-US state commercial payloads (expect `53`; largest state `Japan`=`9`)
+
 > Show payloads launched from the US where the owning state is not the US, only Commercial Communications; then focus the largest non-US state group.
+
 ```sql
 SELECT COUNT(DISTINCT d.norad_cat_id) AS c
 FROM discos_objects d
@@ -242,7 +260,9 @@ WHERE d.object_class = 'Payload'
 ```
 
 ### Q3 — GEO-like mission-related Kourou/Xichang (expect `33`)
+
 > Show only mission-related objects with GEO-like period (1300–1600 min), limited to launches from Kourou or Xichang.
+
 ```sql
 SELECT COUNT(DISTINCT d.norad_cat_id) AS c
 FROM discos_objects d

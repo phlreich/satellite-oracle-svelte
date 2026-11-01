@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
-import { env } from '$env/dynamic/private';
+import { TOKEN_DW } from '$app/env/private';
 import { createLogger, serializeError } from './logger';
 
 const DISCO_BASE_URL = 'https://discosweb.esoc.esa.int/api';
@@ -9,14 +9,8 @@ const DISCO_PAGE_SIZE = 100;
 const DISCO_MIN_REQUEST_INTERVAL_MS = 750;
 const DISCO_MAX_RETRIES = 5;
 
-type JsonApiIdentifier = {
-	id: string;
-	type: string;
-};
-
-type JsonApiRelationship = {
-	data?: JsonApiIdentifier | JsonApiIdentifier[] | null;
-};
+type JsonApiIdentifier = { id: string; type: string };
+type JsonApiRelationship = { data?: JsonApiIdentifier | JsonApiIdentifier[] | null };
 
 type JsonApiResource = {
 	id: string;
@@ -224,7 +218,7 @@ async function fetchObjectsPage({
 }
 
 export async function refreshDiscosData(db: Database.Database): Promise<void> {
-	const token = asString(env.TOKEN_DW);
+	const token = asString(TOKEN_DW);
 	if (!token) {
 		discosLogger.info('discos refresh skipped: TOKEN_DW is not set');
 		return;

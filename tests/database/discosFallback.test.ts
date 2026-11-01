@@ -20,7 +20,7 @@ const GP_CSV = `CCSDS_OMM_VERS,COMMENT,CREATION_DATE,ORIGINATOR,OBJECT_NAME,OBJE
 3.0,TEST,,18 SPCS,TEST SAT,2020-001A,EARTH,TEME,UTC,SGP4,2026-01-01T00:00:00,15.1,0.0001,53,0,0,0,0,U,99901,1,1,0,0,0,6800,95,500,500,PAYLOAD,SMALL,US,2020-01-01,AFETR,,1,1,0 TEST SAT,1 99901U 20001A   26001.00000000  .00000000  00000-0  00000-0 0  9991,2 99901  53.0000 000.0000 0001000 000.0000 000.0000 15.10000000    01
 `;
 
-describe.sequential('database refresh DISCOS fallback', () => {
+describe('database refresh DISCOS fallback', { concurrent: false }, () => {
 	const originalCwd = process.cwd();
 	let tempDir = '';
 
@@ -39,7 +39,7 @@ describe.sequential('database refresh DISCOS fallback', () => {
 	});
 
 	afterEach(() => {
-		vi.doUnmock('$env/dynamic/private');
+		vi.doUnmock('$app/env/private');
 		vi.unstubAllGlobals();
 		process.chdir(originalCwd);
 		if (tempDir) {
@@ -49,12 +49,10 @@ describe.sequential('database refresh DISCOS fallback', () => {
 
 	it('keeps the last DISCOS snapshot when the upstream refresh fails', async () => {
 		vi.resetModules();
-		vi.doMock('$env/dynamic/private', () => ({
-			env: {
-				TOKEN_DW: 'test-token',
-				EMAIL: '',
-				PASSWORD: ''
-			}
+		vi.doMock('$app/env/private', () => ({
+			TOKEN_DW: 'test-token',
+			EMAIL: '',
+			PASSWORD: ''
 		}));
 		const { ensureDiscosTables } = await import('../../src/lib/server/discos.server');
 
@@ -169,9 +167,9 @@ describe.sequential('database refresh DISCOS fallback', () => {
 			liveDb.prepare('SELECT COUNT(*) AS count FROM discos_objects').get() as { count: number }
 		).count;
 		const discosEntityCount = (
-			liveDb
-				.prepare('SELECT COUNT(*) AS count FROM discos_object_entities')
-				.get() as { count: number }
+			liveDb.prepare('SELECT COUNT(*) AS count FROM discos_object_entities').get() as {
+				count: number;
+			}
 		).count;
 		const retainedObject = liveDb
 			.prepare(

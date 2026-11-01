@@ -1,9 +1,8 @@
-import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { runAssist } from '$lib/server/assist/assistant';
-import type { AssistRequestBody } from '$lib/server/assist/types';
-import { createLogger, serializeError } from '$lib/server/logger';
-import { waitForStartupInitialization } from '$lib/server/startup.server';
+import { runAssist } from '#lib/server/assist/assistant.js';
+import type { AssistRequestBody } from '#lib/server/assist/types.js';
+import { createLogger, serializeError } from '#lib/server/logger.js';
+import { waitForStartupInitialization } from '#lib/server/startup.server.js';
 
 const MAX_REQUEST_BYTES = 50_000;
 const MAX_MESSAGES = 40;
@@ -52,7 +51,7 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
 	logger.info('assist request received', { contentLength: contentLength ?? 'unknown' });
 	if (contentLength && Number(contentLength) > MAX_REQUEST_BYTES) {
 		logger.warn('assist request rejected: payload too large', { contentLength });
-		return json({ error: 'Request too large' }, { status: 413 });
+		return Response.json({ error: 'Request too large' }, { status: 413 });
 	}
 
 	let parsedBody: unknown;
@@ -60,12 +59,12 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
 		parsedBody = await request.json();
 	} catch (error) {
 		logger.warn('assist request rejected: invalid json', { error: serializeError(error) });
-		return json({ error: 'Invalid JSON body' }, { status: 400 });
+		return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
 	}
 
 	if (!isValidBody(parsedBody)) {
 		logger.warn('assist request rejected: invalid body shape');
-		return json({ error: 'Invalid assist request body' }, { status: 400 });
+		return Response.json({ error: 'Invalid assist request body' }, { status: 400 });
 	}
 
 	try {
@@ -98,10 +97,10 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
 			visibilityCount: result.action?.visibility?.returnedCount ?? null,
 			focusTarget: result.action?.focus?.target ?? null
 		});
-		return json(result);
+		return Response.json(result);
 	} catch (error) {
 		logger.error('assist request failed', { error: serializeError(error) });
-		return json({
+		return Response.json({
 			assistantMessage:
 				'The assistant ran into a backend error while processing that request. Please try again. No scene change was applied.',
 			action: null

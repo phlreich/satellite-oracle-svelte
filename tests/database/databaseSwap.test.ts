@@ -4,12 +4,10 @@ import os from 'os';
 import path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('$env/dynamic/private', () => ({
-	env: {
-		TOKEN_DW: '',
-		EMAIL: '',
-		PASSWORD: ''
-	}
+vi.mock('$app/env/private', () => ({
+	TOKEN_DW: '',
+	EMAIL: '',
+	PASSWORD: ''
 }));
 
 const SATCAT_CSV = `INTLDES,NORAD_CAT_ID,OBJECT_TYPE,SATNAME,COUNTRY,LAUNCH,SITE,DECAY,PERIOD,INCLINATION,APOGEE,PERIGEE,COMMENT,COMMENTCODE,RCSVALUE,RCS_SIZE,FILE,LAUNCH_YEAR,LAUNCH_NUM,LAUNCH_PIECE,CURRENT,OBJECT_NAME,OBJECT_ID,OBJECT_NUMBER
@@ -24,7 +22,7 @@ const GP_CSV = `CCSDS_OMM_VERS,COMMENT,CREATION_DATE,ORIGINATOR,OBJECT_NAME,OBJE
 3.0,TEST,,18 SPCS,TEST SAT,2020-001A,EARTH,TEME,UTC,SGP4,2026-01-01T00:00:00,15.1,0.0001,53,0,0,0,0,U,99901,1,1,0,0,0,6800,95,500,500,PAYLOAD,SMALL,US,2020-01-01,AFETR,,1,1,0 TEST SAT,1 99901U 20001A   26001.00000000  .00000000  00000-0  00000-0 0  9991,2 99901  53.0000 000.0000 0001000 000.0000 000.0000 15.10000000    01
 `;
 
-describe.sequential('database refresh swap smoke', () => {
+describe('database refresh swap smoke', { concurrent: false }, () => {
 	const originalCwd = process.cwd();
 	let tempDir = '';
 
@@ -70,9 +68,8 @@ describe.sequential('database refresh swap smoke', () => {
 		expect(fs.existsSync(nextDbPath)).toBe(false);
 
 		const liveDb = new Database(liveDbPath, { readonly: true });
-		const gpCount = (
-			liveDb.prepare('SELECT COUNT(*) AS count FROM gp').get() as { count: number }
-		).count;
+		const gpCount = (liveDb.prepare('SELECT COUNT(*) AS count FROM gp').get() as { count: number })
+			.count;
 		const joinedCount = (
 			liveDb
 				.prepare(

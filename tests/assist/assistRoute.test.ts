@@ -5,11 +5,11 @@ const { runAssistMock, waitForStartupInitializationMock } = vi.hoisted(() => ({
 	waitForStartupInitializationMock: vi.fn().mockResolvedValue(undefined)
 }));
 
-vi.mock('$lib/server/assist/assistant', () => ({
+vi.mock('#lib/server/assist/assistant.js', () => ({
 	runAssist: runAssistMock
 }));
 
-vi.mock('$lib/server/startup.server', () => ({
+vi.mock('#lib/server/startup.server.js', () => ({
 	waitForStartupInitialization: waitForStartupInitializationMock
 }));
 

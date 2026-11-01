@@ -1,14 +1,16 @@
-import { sveltekit } from '@sveltejs/kit/vite';
-import { defineConfig } from 'vitest/config';
+import { defineConfig, mergeConfig } from 'vitest/config';
+import viteConfig from './vite.config.ts';
 
-export default defineConfig({
-	plugins: [sveltekit()],
-	test: {
-		environment: 'node',
-		globals: true,
-		include: ['tests/**/*.test.ts'],
-		setupFiles: ['tests/setup/no-network.ts'],
-		clearMocks: true,
-		restoreMocks: true
-	}
-});
+export default mergeConfig(
+	viteConfig,
+	defineConfig({
+		test: {
+			environment: 'node',
+			globals: true,
+			include: ['tests/**/*.test.ts'],
+			setupFiles: ['tests/setup/no-network.ts'],
+			clearMocks: true,
+			restoreMocks: true
+		}
+	})
+);
