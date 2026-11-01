@@ -73,8 +73,7 @@ The server validates tool args and applies a single deterministic scene-action p
   tables are reachable only when routed through semantic views. Missing semantic columns can
   stall model analysis until the views are updated.
 - `node:sqlite`'s `DatabaseSync#prepare` only compiles the first statement — check
-  `statement.sourceSQL` tail to reject extra statements in one tool call. (`node:sqlite` is
-  still experimental in Node 24.)
+  `statement.sourceSQL` tail to reject extra statements in one tool call.
 
 ### Round budgeting and fast return
 

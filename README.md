@@ -4,6 +4,7 @@ The skies are busy, we prosper.
 
 ### Prerequisites
 
+- Node.js 26 LTS (`nvm install` uses the version pinned in `.nvmrc`)
 - A free account at [space-track.org](https://www.space-track.org/auth/login)
 - OpenAI API Key
 

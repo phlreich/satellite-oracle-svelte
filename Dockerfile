@@ -1,5 +1,5 @@
 # satellite-oracle-svelte/Dockerfile
-FROM node:24 AS build
+FROM node:26-bookworm AS build
 WORKDIR /usr/src/app
 COPY package*.json ./
 RUN npm ci --no-audit
@@ -7,7 +7,7 @@ COPY . .
 RUN npm run build
 RUN npm prune --omit=dev --no-audit
 
-FROM node:24-bookworm-slim AS runtime
+FROM node:26-bookworm-slim AS runtime
 WORKDIR /usr/src/app
 ENV NODE_ENV=production
 COPY --from=build --chown=node:node /usr/src/app/package*.json ./
